@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TTS-Explain Demo</title>
+  <meta name="description" content="Interactive atlas exploration demo for TTS-Explain." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/css/main.css" />
+</head>
+<body class="mode-select">
+  <div class="page-bg" aria-hidden="true"></div>
+  <div class="page-overlay" aria-hidden="true"></div>
+
+  <main class="app-shell">
+    <header class="app-header">
+      <div class="app-title-wrap">
+        <p class="app-kicker">Paper Demo</p>
+        <h1 class="app-title">TTS-Explain Interactive Explorer</h1>
+        <p class="app-subtitle">Select a model, choose an explanation method, then inspect concept behavior directly in the atlas.</p>
+      </div>
+      <div class="step-pill-row" id="step-pill-row" aria-label="Progress">
+        <span class="step-pill" data-step="model">1. Model</span>
+        <span class="step-pill" data-step="method">2. Method</span>
+        <span class="step-pill" data-step="atlas">3. Atlas</span>
+      </div>
+    </header>
+
+    <section class="step-view is-active" data-step-view="model">
+      <div class="step-head">
+        <h2>Select the Model</h2>
+      </div>
+      <div class="card-grid model-grid">
+        <button class="pick-card" data-model="clip" type="button" aria-label="Select CLIP RN50">
+          <img src="assets/cards/models/CLIP-RN50.svg" alt="CLIP RN50" />
+        </button>
+      </div>
+    </section>
+
+    <section class="step-view" data-step-view="method">
+      <div class="step-head">
+        <h2>Select Explanation Type</h2>
+        <button class="ghost-btn" data-go="model" type="button">Back To Models</button>
+      </div>
+      <div class="card-grid method-grid">
+        <button class="pick-card" data-method="atlas" type="button" aria-label="Select Atlas Explanation">
+          <img src="assets/cards/explanation_types/Atlas.svg" alt="Atlas" />
+        </button>
+      </div>
+    </section>
+
+    <section class="step-view" data-step-view="atlas">
+      <div class="step-head">
+        <h2>Concept Atlas</h2>
+        <div class="selection-summary" id="selection-summary"></div>
+        <div class="atlas-actions">
+          <button class="ghost-btn" data-go="method" type="button">Back To Methods</button>
+          <button class="ghost-btn" data-action="reset-view" type="button">Reset View</button>
+        </div>
+      </div>
+
+      <div class="atlas-panel">
+        <div class="atlas-loading" id="atlas-loading">Preparing atlas...</div>
+        <div class="atlas-error" id="atlas-error" hidden></div>
+        <div id="atlas-root" class="atlas-root" aria-label="Interactive concept atlas"></div>
+      </div>
+
+      <p class="atlas-help">Controls: mouse wheel to zoom, drag to pan, hover points for concept cards.</p>
+    </section>
+  </main>
+
+  <script src="assets/js/main.js"></script>
+</body>
+</html>
