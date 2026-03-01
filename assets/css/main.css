@@ -470,7 +470,7 @@ body.mode-atlas .atlas-root {
 }
 
 .atlas-title {
-  font-family: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+  font-family: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 16px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -527,6 +527,28 @@ body.mode-atlas .atlas-root {
   border: 1px solid #d7dce5;
   border-radius: 8px;
   padding: 6px 8px;
+}
+
+.atlas-label-toggle {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 5;
+  border: 1px solid #d7dce5;
+  background: rgba(255, 255, 255, 0.94);
+  color: #1f2937;
+  border-radius: 9px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.atlas-label-toggle:hover,
+.atlas-label-toggle:focus-visible {
+  border-color: #9aa8bc;
+  outline: none;
 }
 
 .atlas-tooltip {

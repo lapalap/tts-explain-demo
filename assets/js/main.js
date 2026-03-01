@@ -453,6 +453,7 @@
         hoverIndex: -1,
         mouseX: 0,
         mouseY: 0,
+        showClusterLabels: true,
       };
 
       this.renderPending = false;
@@ -607,6 +608,7 @@
         '  <section class="atlas-body">',
         '    <canvas class="atlas-canvas"></canvas>',
         '    <div class="atlas-status">ready</div>',
+        '    <button class="atlas-label-toggle" type="button">Hide Cluster Labels</button>',
         '    <div class="atlas-tooltip"></div>',
         '  </section>',
         '</section>',
@@ -615,12 +617,25 @@
       this.canvas = this.root.querySelector(".atlas-canvas");
       this.bodyEl = this.root.querySelector(".atlas-body");
       this.statusEl = this.root.querySelector(".atlas-status");
+      this.toggleLabelsBtn = this.root.querySelector(".atlas-label-toggle");
       this.tooltipEl = this.root.querySelector(".atlas-tooltip");
       this.ctx = this.canvas.getContext("2d");
 
+      this._updateLabelsButton();
       this._bindEvents();
       this._resizeCanvas();
       this._scheduleRender();
+    }
+
+    _updateLabelsButton() {
+      if (!this.toggleLabelsBtn) return;
+      if (this.state.showClusterLabels) {
+        this.toggleLabelsBtn.textContent = "Hide Cluster Labels";
+        this.toggleLabelsBtn.setAttribute("aria-pressed", "true");
+      } else {
+        this.toggleLabelsBtn.textContent = "Show Cluster Labels";
+        this.toggleLabelsBtn.setAttribute("aria-pressed", "false");
+      }
     }
 
     _on(target, eventName, handler, options) {
@@ -688,6 +703,14 @@
         ev.preventDefault();
         this.resetView();
       });
+
+      if (this.toggleLabelsBtn) {
+        this._on(this.toggleLabelsBtn, "click", () => {
+          this.state.showClusterLabels = !this.state.showClusterLabels;
+          this._updateLabelsButton();
+          this._scheduleRender();
+        });
+      }
 
       if (typeof ResizeObserver !== "undefined") {
         this.ro = new ResizeObserver(() => this._resizeCanvas());
@@ -1158,7 +1181,9 @@
       const blend = this._levelBlend();
       this._drawPoints(blend.lo, 1 - blend.t);
       if (blend.hi !== blend.lo) this._drawPoints(blend.hi, blend.t);
-      this._drawClusterLabelsBlended(blend.lo, blend.hi, blend.t);
+      if (this.state.showClusterLabels) {
+        this._drawClusterLabelsBlended(blend.lo, blend.hi, blend.t);
+      }
       this._drawHoverRing();
 
       const activeLevel = blend.t < 0.5 ? blend.lo : blend.hi;
