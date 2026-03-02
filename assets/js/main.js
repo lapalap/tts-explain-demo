@@ -462,6 +462,18 @@
       this.renderPending = false;
       this.imageSrcCache = Object.create(null);
       this.cleanupFns = [];
+      this.touchState = {
+        mode: "none",
+        lastX: 0,
+        lastY: 0,
+        tapStartX: 0,
+        tapStartY: 0,
+        tapStartTs: 0,
+        tapMoved: false,
+        pinchDist: 0,
+        pinchCx: 0,
+        pinchCy: 0,
+      };
       this.palette = [
         "#2f80ed", "#27ae60", "#eb5757", "#f2994a", "#9b51e0", "#00a8a8", "#f2c94c", "#56ccf2",
         "#6fcf97", "#bb6bd9", "#f4a261", "#e76f51", "#264653", "#219ebc", "#8ecae6", "#ff7f50",
@@ -788,6 +800,155 @@
         });
       }
 
+      this._on(this.canvas, "touchstart", (ev) => {
+        if (!ev.touches || ev.touches.length === 0) return;
+        ev.preventDefault();
+
+        if (ev.touches.length === 1) {
+          const t = ev.touches[0];
+          this.state.dragging = true;
+          this.canvas.classList.add("atlas-dragging");
+          this.touchState.mode = "pan";
+          this.touchState.lastX = t.clientX;
+          this.touchState.lastY = t.clientY;
+          this.touchState.tapStartX = t.clientX;
+          this.touchState.tapStartY = t.clientY;
+          this.touchState.tapStartTs = Date.now();
+          this.touchState.tapMoved = false;
+          return;
+        }
+
+        const a = ev.touches[0];
+        const b = ev.touches[1];
+        this.state.dragging = false;
+        this.canvas.classList.remove("atlas-dragging");
+        this.touchState.mode = "pinch";
+        this.touchState.tapMoved = true;
+        this.touchState.pinchDist = Math.max(1, Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY));
+        this.touchState.pinchCx = (a.clientX + b.clientX) * 0.5;
+        this.touchState.pinchCy = (a.clientY + b.clientY) * 0.5;
+      }, { passive: false });
+
+      this._on(this.canvas, "touchmove", (ev) => {
+        if (!ev.touches || ev.touches.length === 0) return;
+        ev.preventDefault();
+
+        if (ev.touches.length === 1) {
+          const t = ev.touches[0];
+          if (this.touchState.mode !== "pan") {
+            this.touchState.mode = "pan";
+            this.touchState.lastX = t.clientX;
+            this.touchState.lastY = t.clientY;
+            this.touchState.tapMoved = true;
+            return;
+          }
+
+          const dx = t.clientX - this.touchState.lastX;
+          const dy = t.clientY - this.touchState.lastY;
+          this.touchState.lastX = t.clientX;
+          this.touchState.lastY = t.clientY;
+
+          if (Math.hypot(t.clientX - this.touchState.tapStartX, t.clientY - this.touchState.tapStartY) > 8) {
+            this.touchState.tapMoved = true;
+          }
+
+          this.state.panX += dx;
+          this.state.panY += dy;
+          const rect = this.canvas.getBoundingClientRect();
+          this.state.mouseX = t.clientX - rect.left;
+          this.state.mouseY = t.clientY - rect.top;
+          this._scheduleRender();
+          return;
+        }
+
+        const a = ev.touches[0];
+        const b = ev.touches[1];
+        const cx = (a.clientX + b.clientX) * 0.5;
+        const cy = (a.clientY + b.clientY) * 0.5;
+        const dist = Math.max(1, Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY));
+
+        if (this.touchState.mode !== "pinch") {
+          this.touchState.mode = "pinch";
+          this.touchState.pinchDist = dist;
+          this.touchState.pinchCx = cx;
+          this.touchState.pinchCy = cy;
+          this.touchState.tapMoved = true;
+          return;
+        }
+
+        const rect = this.canvas.getBoundingClientRect();
+        const mx = cx - rect.left;
+        const my = cy - rect.top;
+        const factor = this.touchState.pinchDist > 0 ? (dist / this.touchState.pinchDist) : 1;
+
+        this.state.panX += (cx - this.touchState.pinchCx);
+        this.state.panY += (cy - this.touchState.pinchCy);
+        this.touchState.pinchDist = dist;
+        this.touchState.pinchCx = cx;
+        this.touchState.pinchCy = cy;
+
+        if (Math.abs(factor - 1) > 0.001) {
+          this._zoomAt(mx, my, factor);
+        }
+        this._scheduleRender();
+      }, { passive: false });
+
+      this._on(this.canvas, "touchend", (ev) => {
+        ev.preventDefault();
+
+        if (!ev.touches || ev.touches.length === 0) {
+          this.state.dragging = false;
+          this.canvas.classList.remove("atlas-dragging");
+
+          if (this.touchState.mode === "pan" && !this.touchState.tapMoved) {
+            const dt = Date.now() - this.touchState.tapStartTs;
+            const changed = ev.changedTouches && ev.changedTouches.length > 0 ? ev.changedTouches[0] : null;
+            if (changed && dt < 360) {
+              const rect = this.canvas.getBoundingClientRect();
+              const mx = changed.clientX - rect.left;
+              const my = changed.clientY - rect.top;
+              this.state.mouseX = mx;
+              this.state.mouseY = my;
+              this._pickHover(mx, my, 22);
+              this._scheduleRender();
+            }
+          } else {
+            this.state.hoverIndex = -1;
+            this.tooltipEl.classList.remove("is-visible");
+            this._scheduleRender();
+          }
+
+          this.touchState.mode = "none";
+          return;
+        }
+
+        if (ev.touches.length === 1) {
+          const t = ev.touches[0];
+          this.touchState.mode = "pan";
+          this.touchState.lastX = t.clientX;
+          this.touchState.lastY = t.clientY;
+          this.touchState.tapStartX = t.clientX;
+          this.touchState.tapStartY = t.clientY;
+          this.touchState.tapStartTs = Date.now();
+          this.touchState.tapMoved = true;
+          return;
+        }
+
+        const a = ev.touches[0];
+        const b = ev.touches[1];
+        this.touchState.mode = "pinch";
+        this.touchState.tapMoved = true;
+        this.touchState.pinchDist = Math.max(1, Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY));
+        this.touchState.pinchCx = (a.clientX + b.clientX) * 0.5;
+        this.touchState.pinchCy = (a.clientY + b.clientY) * 0.5;
+      }, { passive: false });
+
+      this._on(this.canvas, "touchcancel", () => {
+        this.state.dragging = false;
+        this.canvas.classList.remove("atlas-dragging");
+        this.touchState.mode = "none";
+      }, { passive: false });
+
       if (typeof ResizeObserver !== "undefined") {
         this.ro = new ResizeObserver(() => this._resizeCanvas());
         this.ro.observe(this.canvas);
@@ -1068,8 +1229,8 @@
       this.ctx.stroke();
     }
 
-    _pickHover(mouseX, mouseY) {
-      const pickR = 8.5;
+    _pickHover(mouseX, mouseY, pickRadius) {
+      const pickR = Number.isFinite(Number(pickRadius)) ? Math.max(2, Number(pickRadius)) : 8.5;
       let best = -1;
       let bestD2 = pickR * pickR;
       for (let i = 0; i < this.points.length; i += 1) {
