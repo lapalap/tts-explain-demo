@@ -802,13 +802,12 @@
 
       this._on(this.canvas, "touchstart", (ev) => {
         if (!ev.touches || ev.touches.length === 0) return;
-        ev.preventDefault();
 
         if (ev.touches.length === 1) {
           const t = ev.touches[0];
-          this.state.dragging = true;
-          this.canvas.classList.add("atlas-dragging");
-          this.touchState.mode = "pan";
+          this.state.dragging = false;
+          this.canvas.classList.remove("atlas-dragging");
+          this.touchState.mode = "pending";
           this.touchState.lastX = t.clientX;
           this.touchState.lastY = t.clientY;
           this.touchState.tapStartX = t.clientX;
@@ -818,6 +817,7 @@
           return;
         }
 
+        ev.preventDefault();
         const a = ev.touches[0];
         const b = ev.touches[1];
         this.state.dragging = false;
@@ -831,27 +831,45 @@
 
       this._on(this.canvas, "touchmove", (ev) => {
         if (!ev.touches || ev.touches.length === 0) return;
-        ev.preventDefault();
 
         if (ev.touches.length === 1) {
           const t = ev.touches[0];
-          if (this.touchState.mode !== "pan") {
-            this.touchState.mode = "pan";
-            this.touchState.lastX = t.clientX;
-            this.touchState.lastY = t.clientY;
-            this.touchState.tapMoved = true;
-            return;
-          }
-
           const dx = t.clientX - this.touchState.lastX;
           const dy = t.clientY - this.touchState.lastY;
           this.touchState.lastX = t.clientX;
           this.touchState.lastY = t.clientY;
 
-          if (Math.hypot(t.clientX - this.touchState.tapStartX, t.clientY - this.touchState.tapStartY) > 8) {
+          const driftX = t.clientX - this.touchState.tapStartX;
+          const driftY = t.clientY - this.touchState.tapStartY;
+
+          if (this.touchState.mode === "scroll") {
+            return;
+          }
+
+          if (this.touchState.mode === "pending") {
+            if (Math.hypot(driftX, driftY) < 3) return;
+            if (Math.abs(driftY) > Math.abs(driftX) * 1.15) {
+              this.touchState.mode = "scroll";
+              this.state.dragging = false;
+              this.canvas.classList.remove("atlas-dragging");
+              this.state.hoverIndex = -1;
+              this.tooltipEl.classList.remove("is-visible");
+              return;
+            }
+            this.touchState.mode = "pan";
+            this.state.dragging = true;
+            this.canvas.classList.add("atlas-dragging");
+            this.touchState.lastX = t.clientX;
+            this.touchState.lastY = t.clientY;
             this.touchState.tapMoved = true;
           }
 
+          if (Math.hypot(driftX, driftY) > 8) {
+            this.touchState.tapMoved = true;
+          }
+
+          if (this.touchState.mode !== "pan") return;
+          ev.preventDefault();
           this.state.panX += dx;
           this.state.panY += dy;
           const rect = this.canvas.getBoundingClientRect();
@@ -863,6 +881,7 @@
 
         const a = ev.touches[0];
         const b = ev.touches[1];
+        ev.preventDefault();
         const cx = (a.clientX + b.clientX) * 0.5;
         const cy = (a.clientY + b.clientY) * 0.5;
         const dist = Math.max(1, Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY));
@@ -894,13 +913,15 @@
       }, { passive: false });
 
       this._on(this.canvas, "touchend", (ev) => {
-        ev.preventDefault();
+        if (this.touchState.mode !== "scroll") {
+          ev.preventDefault();
+        }
 
         if (!ev.touches || ev.touches.length === 0) {
           this.state.dragging = false;
           this.canvas.classList.remove("atlas-dragging");
 
-          if (this.touchState.mode === "pan" && !this.touchState.tapMoved) {
+          if ((this.touchState.mode === "pending" || this.touchState.mode === "pan") && !this.touchState.tapMoved) {
             const dt = Date.now() - this.touchState.tapStartTs;
             const changed = ev.changedTouches && ev.changedTouches.length > 0 ? ev.changedTouches[0] : null;
             if (changed && dt < 360) {
@@ -924,7 +945,7 @@
 
         if (ev.touches.length === 1) {
           const t = ev.touches[0];
-          this.touchState.mode = "pan";
+          this.touchState.mode = "pending";
           this.touchState.lastX = t.clientX;
           this.touchState.lastY = t.clientY;
           this.touchState.tapStartX = t.clientX;
@@ -1445,11 +1466,7 @@
 
       const activeLevel = blend.t < 0.5 ? blend.lo : blend.hi;
       const activeClusters = Number((this.levels[activeLevel] || {}).n_clusters || 0);
-      let statusText = `zoom ${this.state.zoom.toFixed(2)}x | level ${activeLevel + 1}/${this.levels.length} | clusters ${activeClusters} | points ${this.points.length}`;
-      if (this.state.searchQuery) {
-        statusText += ` | matches ${this.state.searchMatchCount}`;
-      }
-      this.statusEl.textContent = statusText;
+      this.statusEl.textContent = `zoom ${this.state.zoom.toFixed(2)}x | level ${activeLevel + 1}/${this.levels.length} | clusters ${activeClusters}`;
 
       this._showTooltip(this.state.mouseX, this.state.mouseY);
     }

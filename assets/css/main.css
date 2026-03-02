@@ -398,6 +398,11 @@ body.mode-atlas .atlas-root {
     overflow-y: auto;
   }
 
+  body.mode-atlas {
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
   .app-shell {
     width: calc(100vw - 18px);
     height: auto;
@@ -408,9 +413,16 @@ body.mode-atlas .atlas-root {
 
   body.mode-atlas .app-shell {
     width: calc(100vw - 8px);
-    height: calc(100vh - 8px);
+    height: auto;
+    min-height: calc(100dvh - 8px);
     margin: 4px auto;
     border-radius: 14px;
+  }
+
+  @supports not (height: 100dvh) {
+    body.mode-atlas .app-shell {
+      min-height: calc(100vh - 8px);
+    }
   }
 
   .app-header {
@@ -452,9 +464,23 @@ body.mode-atlas .atlas-root {
   }
 
   .atlas-search {
-    min-width: min(250px, 78vw);
-    max-width: 84vw;
-    bottom: 46px;
+    left: 12px;
+    top: 12px;
+    bottom: auto;
+    transform: none;
+    min-width: min(175px, 55vw);
+    max-width: 58vw;
+  }
+
+  .atlas-label-toggle {
+    top: 12px;
+    right: 12px;
+    bottom: auto;
+  }
+
+  .atlas-body,
+  .atlas-canvas {
+    touch-action: pan-y pinch-zoom;
   }
 }
 
