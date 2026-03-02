@@ -1,8 +1,22 @@
 (function () {
   "use strict";
 
-  const ATLAS_URL = "assets/data/concept_atlas_qwen_gpus_4567.atlas.gz";
-  const VALID_MODELS = new Set(["clip"]);
+  const MODEL_CONFIG = Object.freeze({
+    clip: Object.freeze({
+      label: "CLIP RN50",
+      atlasUrls: Object.freeze([
+        "assets/data/concept_atlas_clip_qwen_gpus_4567.atlas.gz",
+      ]),
+    }),
+    densenet161: Object.freeze({
+      label: "DenseNet161",
+      atlasUrls: Object.freeze([
+        "assets/data/concept_atlas_densenet161_qwen_gpus_4567.atlas.gz",
+      ]),
+    }),
+  });
+
+  const VALID_MODELS = new Set(Object.keys(MODEL_CONFIG));
   const VALID_METHODS = new Set(["atlas"]);
 
   const appState = {
@@ -10,6 +24,7 @@
     model: null,
     method: null,
     atlas: null,
+    atlasModel: null,
     atlasViewer: null,
     atlasLoading: false,
   };
@@ -31,6 +46,17 @@
     const key = String(value || "").trim().toLowerCase();
     if (!key || !allowed.has(key)) return null;
     return key;
+  }
+
+  function modelLabel(modelKey) {
+    const cfg = modelKey ? MODEL_CONFIG[modelKey] : null;
+    if (cfg && cfg.label) return cfg.label;
+    return modelKey ? String(modelKey).toUpperCase() : "-";
+  }
+
+  function atlasUrlCandidates(modelKey) {
+    const cfg = modelKey ? MODEL_CONFIG[modelKey] : null;
+    return cfg && Array.isArray(cfg.atlasUrls) ? cfg.atlasUrls : [];
   }
 
   function setUiMode(step) {
@@ -98,7 +124,7 @@
 
   function updateSelectionSummary() {
     if (!dom.selectionSummary) return;
-    const model = appState.model ? String(appState.model).toUpperCase() : "-";
+    const model = modelLabel(appState.model);
     const method = appState.method ? String(appState.method).toUpperCase() : "-";
     dom.selectionSummary.textContent = `Model: ${model} | Method: ${method}`;
   }
@@ -1474,7 +1500,18 @@
 
   async function loadAtlasIfNeeded() {
     if (!dom.atlasRoot) return;
-    if (appState.atlas && appState.atlasViewer) {
+
+    const model = appState.model || "clip";
+    if (appState.atlasModel && appState.atlasModel !== model) {
+      if (appState.atlasViewer) {
+        appState.atlasViewer.destroy();
+        appState.atlasViewer = null;
+      }
+      appState.atlas = null;
+      appState.atlasModel = null;
+    }
+
+    if (appState.atlas && appState.atlasViewer && appState.atlasModel === model) {
       clearLoadingState();
       if (dom.atlasError) dom.atlasError.hidden = true;
       appState.atlasViewer.notifyResize();
@@ -1486,12 +1523,36 @@
     setLoadingStage("download", 0, 0);
 
     try {
-      const payloadText = await fetchAtlasPayload(ATLAS_URL, setLoadingStage);
+      const urls = atlasUrlCandidates(model);
+      if (!urls.length) {
+        throw new Error(`No atlas URL configured for model "${model}".`);
+      }
+
+      let payloadText = null;
+      const failures = [];
+      for (let i = 0; i < urls.length; i += 1) {
+        const url = urls[i];
+        try {
+          payloadText = await fetchAtlasPayload(url, setLoadingStage);
+          break;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          failures.push(`${url}: ${message}`);
+        }
+      }
+
+      if (payloadText == null) {
+        throw new Error(
+          `Failed to load atlas for model "${model}". Tried:\n${failures.join("\n")}`
+        );
+      }
+
       setLoadingStage("parse", 0, 0);
       const raw = JSON.parse(payloadText);
       setLoadingStage("normalize", 0, 0);
       const atlas = normalizeAtlas(raw);
       appState.atlas = atlas;
+      appState.atlasModel = model;
 
       if (appState.atlasViewer) {
         appState.atlasViewer.destroy();
@@ -1516,7 +1577,9 @@
   function bindEvents() {
     dom.modelCards.forEach((card) => {
       card.addEventListener("click", () => {
-        appState.model = normalizeChoice(card.getAttribute("data-model"), VALID_MODELS) || "clip";
+        const nextModel = normalizeChoice(card.getAttribute("data-model"), VALID_MODELS);
+        if (!nextModel) return;
+        appState.model = nextModel;
         appState.method = null;
         updateSelectionSummary();
         setStep("method");
