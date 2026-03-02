@@ -454,6 +454,9 @@
         mouseX: 0,
         mouseY: 0,
         showClusterLabels: true,
+        searchQuery: "",
+        searchMatches: null,
+        searchMatchCount: 0,
       };
 
       this.renderPending = false;
@@ -466,6 +469,7 @@
 
       this._prepareLevels();
       this._prepareStablePairMap();
+      this._buildSearchIndex();
       this._mount();
     }
 
@@ -609,6 +613,10 @@
         '    <canvas class="atlas-canvas"></canvas>',
         '    <div class="atlas-status">ready</div>',
         '    <button class="atlas-label-toggle" type="button">Hide Cluster Labels</button>',
+        '    <label class="atlas-search" aria-label="Search concepts">',
+        '      <input class="atlas-search-input" type="search" placeholder="Search concepts..." autocomplete="off" spellcheck="false"/>',
+        '      <span class="atlas-search-count" hidden></span>',
+        "    </label>",
         '    <div class="atlas-tooltip"></div>',
         '  </section>',
         '</section>',
@@ -618,10 +626,13 @@
       this.bodyEl = this.root.querySelector(".atlas-body");
       this.statusEl = this.root.querySelector(".atlas-status");
       this.toggleLabelsBtn = this.root.querySelector(".atlas-label-toggle");
+      this.searchInput = this.root.querySelector(".atlas-search-input");
+      this.searchCountEl = this.root.querySelector(".atlas-search-count");
       this.tooltipEl = this.root.querySelector(".atlas-tooltip");
       this.ctx = this.canvas.getContext("2d");
 
       this._updateLabelsButton();
+      this._updateSearchUi();
       this._bindEvents();
       this._resizeCanvas();
       this._scheduleRender();
@@ -636,6 +647,60 @@
         this.toggleLabelsBtn.textContent = "Show Cluster Labels";
         this.toggleLabelsBtn.setAttribute("aria-pressed", "false");
       }
+    }
+
+    _buildSearchIndex() {
+      this.searchIndex = new Array(this.points.length);
+      for (let i = 0; i < this.points.length; i += 1) {
+        const p = this.points[i];
+        const meta = p && typeof p.metadata === "object" ? p.metadata : {};
+        const mainDescription = String(p && p.description ? p.description : "").trim();
+        const vlmFallback = String(meta.vlmgrid_explanation || "").trim();
+        const text = mainDescription || vlmFallback;
+        this.searchIndex[i] = text.toLowerCase();
+      }
+    }
+
+    _updateSearchUi() {
+      if (!this.searchCountEl) return;
+      const q = String(this.state.searchQuery || "").trim();
+      if (!q) {
+        this.searchCountEl.hidden = true;
+        this.searchCountEl.textContent = "";
+        return;
+      }
+      const count = Number(this.state.searchMatchCount || 0);
+      const label = `${count} match${count === 1 ? "" : "es"}`;
+      this.searchCountEl.hidden = false;
+      this.searchCountEl.textContent = label;
+    }
+
+    _updateSearchMatches(query) {
+      const q = String(query || "").trim().toLowerCase();
+      this.state.searchQuery = q;
+
+      if (!q) {
+        this.state.searchMatches = null;
+        this.state.searchMatchCount = 0;
+        this._updateSearchUi();
+        this._scheduleRender();
+        return;
+      }
+
+      const n = this.points.length;
+      const matches = new Uint8Array(n);
+      let count = 0;
+      for (let i = 0; i < n; i += 1) {
+        const hay = this.searchIndex && this.searchIndex[i] ? this.searchIndex[i] : "";
+        if (!hay || !hay.includes(q)) continue;
+        matches[i] = 1;
+        count += 1;
+      }
+
+      this.state.searchMatches = matches;
+      this.state.searchMatchCount = count;
+      this._updateSearchUi();
+      this._scheduleRender();
     }
 
     _on(target, eventName, handler, options) {
@@ -709,6 +774,17 @@
           this.state.showClusterLabels = !this.state.showClusterLabels;
           this._updateLabelsButton();
           this._scheduleRender();
+        });
+      }
+
+      if (this.searchInput) {
+        this._on(this.searchInput, "input", () => {
+          this._updateSearchMatches(this.searchInput.value || "");
+        });
+        this._on(this.searchInput, "keydown", (ev) => {
+          if (ev.key !== "Escape") return;
+          this.searchInput.value = "";
+          this._updateSearchMatches("");
         });
       }
 
@@ -807,17 +883,34 @@
       const lvl = this.levels[levelIndex];
       if (!lvl || !Array.isArray(lvl.labels) || lvl.labels.length !== this.points.length) return;
       const labels = lvl.labels;
-      const r = this.pointRadius;
+      const baseR = this.pointRadius;
+      const hasSearch = !!this.state.searchQuery && this.state.searchMatches instanceof Uint8Array;
+      const searchMatches = hasSearch ? this.state.searchMatches : null;
       for (let i = 0; i < this.points.length; i += 1) {
         const p = this.points[i];
         const xy = this._project(Number(p.x || 0), Number(p.y || 0));
         const sx = xy[0];
         const sy = xy[1];
         if (sx < -5 || sy < -5 || sx > this.state.w + 5 || sy > this.state.h + 5) continue;
-        this.ctx.fillStyle = this._clusterColor(levelIndex, labels[i], this.pointAlpha * alpha);
+
+        const isMatch = !hasSearch || searchMatches[i] === 1;
+        const radius = hasSearch && isMatch ? (baseR + 1.1) : baseR;
+        const pointAlpha = hasSearch
+          ? (isMatch ? (this.pointAlpha * alpha) : (0.22 * alpha))
+          : (this.pointAlpha * alpha);
+        if (pointAlpha <= 0.001) continue;
+
+        this.ctx.fillStyle = (hasSearch && !isMatch)
+          ? `rgba(156, 163, 175, ${pointAlpha.toFixed(4)})`
+          : this._clusterColor(levelIndex, labels[i], pointAlpha);
         this.ctx.beginPath();
-        this.ctx.arc(sx, sy, r, 0, Math.PI * 2);
+        this.ctx.arc(sx, sy, radius, 0, Math.PI * 2);
         this.ctx.fill();
+        if (hasSearch && isMatch) {
+          this.ctx.lineWidth = 0.9;
+          this.ctx.strokeStyle = "rgba(15,23,42,0.42)";
+          this.ctx.stroke();
+        }
       }
     }
 
@@ -1037,17 +1130,20 @@
       return { text, score: Number.isFinite(score) ? score : null };
     }
 
-    _extractTerms(meta, key, fallbackKey) {
+    _extractTerms(meta, key, fallbackKey, maxItems = 3) {
       let raw = meta && typeof meta === "object" ? meta[key] : null;
       if (!Array.isArray(raw) && fallbackKey) {
         raw = meta && typeof meta === "object" ? meta[fallbackKey] : null;
       }
       if (!Array.isArray(raw)) return [];
+      const limit = maxItems === Number.POSITIVE_INFINITY
+        ? Number.POSITIVE_INFINITY
+        : Math.max(1, safeInt(maxItems, 3));
       const out = [];
       for (let i = 0; i < raw.length; i += 1) {
         const row = this._normalizeTermItem(raw[i]);
         if (row) out.push(row);
-        if (out.length >= 3) break;
+        if (out.length >= limit) break;
       }
       return out;
     }
@@ -1188,7 +1284,11 @@
 
       const activeLevel = blend.t < 0.5 ? blend.lo : blend.hi;
       const activeClusters = Number((this.levels[activeLevel] || {}).n_clusters || 0);
-      this.statusEl.textContent = `zoom ${this.state.zoom.toFixed(2)}x | level ${activeLevel + 1}/${this.levels.length} | clusters ${activeClusters} | points ${this.points.length}`;
+      let statusText = `zoom ${this.state.zoom.toFixed(2)}x | level ${activeLevel + 1}/${this.levels.length} | clusters ${activeClusters} | points ${this.points.length}`;
+      if (this.state.searchQuery) {
+        statusText += ` | matches ${this.state.searchMatchCount}`;
+      }
+      this.statusEl.textContent = statusText;
 
       this._showTooltip(this.state.mouseX, this.state.mouseY);
     }
