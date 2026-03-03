@@ -154,11 +154,41 @@ body.mode-atlas .app-subtitle {
   max-width: 960px;
 }
 
-.step-pill-row {
+.header-meta-row {
   margin-top: 14px;
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.step-pill-row {
+  margin-top: 0;
+  display: flex;
   gap: 9px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+}
+
+.header-step-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 34px;
+}
+
+.header-control {
+  display: none;
+}
+
+body.step-method .header-control.is-method-control,
+body.step-atlas .header-control.is-atlas-control {
+  display: inline-flex;
+}
+
+body.step-atlas .selection-summary.header-control.is-atlas-control {
+  display: inline-flex;
+  margin: 0;
 }
 
 .step-pill {
@@ -214,26 +244,15 @@ body.mode-atlas .app-subtitle {
 }
 
 .step-view[data-step-view="model"] .card-grid {
-  display: grid;
-  grid-template-columns: repeat(2, var(--select-card-width));
-  grid-template-rows: var(--select-card-height);
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   justify-content: center;
   align-items: flex-end;
-  column-gap: 20px;
-  row-gap: 0;
+  gap: 20px;
   width: fit-content;
   margin-left: auto;
   margin-right: auto;
-}
-
-.step-view[data-step-view="model"] .pick-card[data-model="clip"] {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.step-view[data-step-view="model"] .pick-card[data-model="densenet161"] {
-  grid-column: 2;
-  grid-row: 1;
 }
 
 .step-head {
@@ -277,8 +296,7 @@ body.mode-atlas .app-subtitle {
 }
 
 .selection-summary {
-  margin-left: auto;
-  margin-right: 6px;
+  margin: 0;
   border-radius: 999px;
   border: 1px solid #cdc3b2;
   background: #f8f2e5;
@@ -483,18 +501,12 @@ body.mode-atlas .atlas-root {
     min-height: min(68vh, 760px);
   }
 
-  .selection-summary {
-    margin-left: 0;
-    order: 3;
-    width: 100%;
-  }
-
   .model-grid {
     gap: 14px;
   }
 
   .step-view[data-step-view="model"] .card-grid {
-    column-gap: 14px;
+    gap: 14px;
   }
 
   .method-grid {
@@ -520,19 +532,75 @@ body.mode-atlas .atlas-root {
     margin-left: auto;
   }
 
+  .header-meta-row {
+    margin-top: 12px;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .step-pill-row {
+    width: auto;
+    flex-wrap: nowrap;
+    flex: 0 0 auto;
+  }
+
+  .header-step-controls {
+    width: auto;
+    flex: 0 0 auto;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+  }
+
+  .selection-summary.header-control.is-atlas-control {
+    max-width: none;
+  }
+
+  .header-step-controls .ghost-btn {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+
+  .selection-summary {
+    padding: 6px 10px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
   .atlas-search {
-    left: 12px;
-    top: 12px;
+    left: 8px;
+    top: 8px;
     bottom: auto;
     transform: none;
-    min-width: min(175px, 55vw);
-    max-width: 58vw;
+    min-width: min(138px, 50vw);
+    max-width: 52vw;
+    padding: 2px 8px;
+    gap: 6px;
+    border-radius: 11px;
   }
 
   .atlas-label-toggle {
-    top: 12px;
-    right: 12px;
+    top: 8px;
+    right: 8px;
     bottom: auto;
+    padding: 4px 8px;
+    font-size: 11px;
+    border-radius: 8px;
+    max-width: 44vw;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .atlas-search-input {
+    min-width: 0;
+    font-size: 11px;
+  }
+
+  .atlas-search-count {
+    font-size: 10px;
   }
 
   .atlas-body,

@@ -22,6 +22,7 @@ The demo expects model-specific atlas files in-repo:
 
 - `assets/data/concept_atlas_clip_qwen_gpus_4567.atlas.gz`
 - `assets/data/concept_atlas_densenet161_qwen_gpus_4567.atlas.gz`
+- `assets/data/concept_atlas_resnet18_qwen_gpus_4567.atlas.gz`
 
 To regenerate from source atlases:
 
@@ -31,6 +32,9 @@ gzip -c /mnt/nfsshare/home/bykov1/tts_explain/runs/clip/openimages/explainer/con
 
 gzip -c /mnt/nfsshare/home/bykov1/tts_explain/runs/densenet/explainer_places365_densenet161/concept_atlas_qwen_gpus_4567.atlas \
   > assets/data/concept_atlas_densenet161_qwen_gpus_4567.atlas.gz
+
+gzip -c /mnt/nfsshare/home/bykov1/tts_explain/runs/resnet/concept_atlas_qwen_gpus_4567.atlas \
+  > assets/data/concept_atlas_resnet18_qwen_gpus_4567.atlas.gz
 ```
 
 ## Publish on GitHub Pages

@@ -14,6 +14,12 @@
         "assets/data/concept_atlas_densenet161_qwen_gpus_4567.atlas.gz",
       ]),
     }),
+    resnet18: Object.freeze({
+      label: "ResNet18",
+      atlasUrls: Object.freeze([
+        "assets/data/concept_atlas_resnet18_qwen_gpus_4567.atlas.gz",
+      ]),
+    }),
   });
 
   const VALID_MODELS = new Set(Object.keys(MODEL_CONFIG));
@@ -63,6 +69,8 @@
     const atlasMode = step === "atlas";
     document.body.classList.toggle("mode-atlas", atlasMode);
     document.body.classList.toggle("mode-select", !atlasMode);
+    document.body.classList.remove("step-model", "step-method", "step-atlas");
+    document.body.classList.add(`step-${step}`);
   }
 
   function updateUrlState() {
