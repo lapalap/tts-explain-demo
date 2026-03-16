@@ -1,10 +1,11 @@
 # tts-explain-demo
 
-GitHub Pages demo for TTS-Explain with a 3-step flow:
+GitHub Pages demo for TTS-Explain with a 4-step flow:
 
 1. Select model
 2. Select explanation type
-3. Explore interactive atlas
+3. Select target (for Global)
+4. Explore interactive atlas/global view
 
 ## Local preview
 
@@ -18,23 +19,25 @@ Then open `http://localhost:8000`.
 
 ## Data files used
 
-The demo expects model-specific atlas files in-repo:
+The demo expects model-specific data in-repo:
 
-- `assets/data/concept_atlas_clip_qwen_gpus_4567.atlas.gz`
-- `assets/data/concept_atlas_densenet161_qwen_gpus_4567.atlas.gz`
-- `assets/data/concept_atlas_resnet18_qwen_gpus_4567.atlas.gz`
+- `assets/data/clip/atlas/concept_atlas_clip_qwen_gpus_4567.atlas.gz`
+- `assets/data/densenet161/atlas/concept_atlas_densenet161_qwen_gpus_4567.atlas.gz`
+- `assets/data/resnet18/atlas/concept_atlas_resnet18_qwen_gpus_4567.atlas.gz`
+- `assets/data/{model}/global/targets.json` (Global target manifest)
+- `assets/data/{model}/global/{target_slug}/*.gexp.gz` (+ optional `.preview.txt` and preview image)
 
 To regenerate from source atlases:
 
 ```bash
 gzip -c /mnt/nfsshare/home/bykov1/tts_explain/runs/clip/openimages/explainer/concept_atlas_qwen_gpus_4567.atlas \
-  > assets/data/concept_atlas_clip_qwen_gpus_4567.atlas.gz
+  > assets/data/clip/atlas/concept_atlas_clip_qwen_gpus_4567.atlas.gz
 
 gzip -c /mnt/nfsshare/home/bykov1/tts_explain/runs/densenet/explainer_places365_densenet161/concept_atlas_qwen_gpus_4567.atlas \
-  > assets/data/concept_atlas_densenet161_qwen_gpus_4567.atlas.gz
+  > assets/data/densenet161/atlas/concept_atlas_densenet161_qwen_gpus_4567.atlas.gz
 
 gzip -c /mnt/nfsshare/home/bykov1/tts_explain/runs/resnet/concept_atlas_qwen_gpus_4567.atlas \
-  > assets/data/concept_atlas_resnet18_qwen_gpus_4567.atlas.gz
+  > assets/data/resnet18/atlas/concept_atlas_resnet18_qwen_gpus_4567.atlas.gz
 ```
 
 ## Publish on GitHub Pages

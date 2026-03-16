@@ -5,30 +5,36 @@
     clip: Object.freeze({
       label: "CLIP RN50",
       atlasUrls: Object.freeze([
-        "assets/data/concept_atlas_clip_qwen_gpus_4567.atlas.gz",
+        "assets/data/clip/atlas/concept_atlas_clip_qwen_gpus_4567.atlas.gz",
       ]),
     }),
     densenet161: Object.freeze({
       label: "DenseNet161",
       atlasUrls: Object.freeze([
-        "assets/data/concept_atlas_densenet161_qwen_gpus_4567.atlas.gz",
+        "assets/data/densenet161/atlas/concept_atlas_densenet161_qwen_gpus_4567.atlas.gz",
       ]),
     }),
     resnet18: Object.freeze({
       label: "ResNet18",
       atlasUrls: Object.freeze([
-        "assets/data/concept_atlas_resnet18_qwen_gpus_4567.atlas.gz",
+        "assets/data/resnet18/atlas/concept_atlas_resnet18_qwen_gpus_4567.atlas.gz",
       ]),
     }),
   });
 
   const VALID_MODELS = new Set(Object.keys(MODEL_CONFIG));
-  const VALID_METHODS = new Set(["atlas"]);
+  const VALID_METHODS = new Set(["atlas", "global", "local"]);
 
   const appState = {
     step: "model",
     model: null,
     method: null,
+    globalTargetKey: null,
+    globalTargetsByModel: Object.create(null),
+    globalTargetsLoading: false,
+    globalPayloadByUrl: Object.create(null),
+    globalRenderKey: null,
+    globalLoading: false,
     atlas: null,
     atlasModel: null,
     atlasViewer: null,
@@ -42,9 +48,18 @@
     methodCards: Array.from(document.querySelectorAll(".pick-card[data-method]")),
     goButtons: Array.from(document.querySelectorAll("[data-go]")),
     selectionSummary: document.getElementById("selection-summary"),
+    atlasPanel: document.getElementById("atlas-panel"),
     atlasRoot: document.getElementById("atlas-root"),
     atlasLoading: document.getElementById("atlas-loading"),
     atlasError: document.getElementById("atlas-error"),
+    atlasHelp: document.getElementById("atlas-help"),
+    globalPanel: document.getElementById("global-panel"),
+    globalRoot: document.getElementById("global-root"),
+    globalLoading: document.getElementById("global-loading"),
+    globalError: document.getElementById("global-error"),
+    globalHelp: document.getElementById("global-help"),
+    globalTargetNote: document.getElementById("global-target-note"),
+    globalTargetGrid: document.getElementById("global-target-grid"),
     resetViewBtn: document.querySelector('[data-action="reset-view"]'),
   };
 
@@ -52,6 +67,20 @@
     const key = String(value || "").trim().toLowerCase();
     if (!key || !allowed.has(key)) return null;
     return key;
+  }
+
+  function normalizeMethodKey(value) {
+    const key = normalizeChoice(value, VALID_METHODS);
+    if (!key) return null;
+    if (key === "local") return "global";
+    return key;
+  }
+
+  function methodLabel(methodKey) {
+    const key = String(methodKey || "").toLowerCase();
+    if (key === "atlas") return "ATLAS";
+    if (key === "global") return "GLOBAL";
+    return "-";
   }
 
   function modelLabel(modelKey) {
@@ -65,22 +94,82 @@
     return cfg && Array.isArray(cfg.atlasUrls) ? cfg.atlasUrls : [];
   }
 
+  function globalBaseDir(modelKey) {
+    const mk = String(modelKey || "").trim().toLowerCase();
+    return mk ? `assets/data/${mk}/global/` : "";
+  }
+
+  function isAbsoluteLikeUrl(value) {
+    const raw = String(value || "").trim().toLowerCase();
+    if (!raw) return false;
+    return raw.startsWith("http://")
+      || raw.startsWith("https://")
+      || raw.startsWith("data:")
+      || raw.startsWith("/");
+  }
+
+  function joinUrl(base, suffix) {
+    const b = String(base || "").trim();
+    const s = String(suffix || "").trim();
+    if (!s) return "";
+    if (isAbsoluteLikeUrl(s)) return s;
+    if (!b) return s;
+    const left = b.endsWith("/") ? b : `${b}/`;
+    const right = s.startsWith("./") ? s.slice(2) : s;
+    return `${left}${right}`;
+  }
+
+  function parseTargetIdText(value, fallbackName) {
+    const raw = String(value || "").trim();
+    if (raw) return raw;
+    const name = String(fallbackName || "");
+    const match = name.match(/target\s*#\s*(\d+)/i);
+    return match ? String(match[1]) : "";
+  }
+
+  function currentGlobalTargets() {
+    const model = String(appState.model || "");
+    if (!model) return [];
+    const rows = appState.globalTargetsByModel[model];
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  function currentGlobalTarget() {
+    const key = String(appState.globalTargetKey || "");
+    if (!key) return null;
+    const rows = currentGlobalTargets();
+    for (let i = 0; i < rows.length; i += 1) {
+      if (String(rows[i].key || "") === key) return rows[i];
+    }
+    return null;
+  }
+
   function setUiMode(step) {
     const atlasMode = step === "atlas";
     document.body.classList.toggle("mode-atlas", atlasMode);
     document.body.classList.toggle("mode-select", !atlasMode);
-    document.body.classList.remove("step-model", "step-method", "step-atlas");
+    document.body.classList.remove("step-model", "step-method", "step-target", "step-atlas");
     document.body.classList.add(`step-${step}`);
+    document.body.classList.toggle("method-atlas", appState.method === "atlas");
+    document.body.classList.toggle("method-global", appState.method === "global");
   }
 
   function updateUrlState() {
     const params = new URLSearchParams();
     if (appState.model) params.set("model", appState.model);
     if (appState.method) params.set("method", appState.method);
+    if (appState.method === "global" && appState.globalTargetKey) {
+      params.set("target", appState.globalTargetKey);
+    }
     const qs = params.toString();
     const next = `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash || ""}`;
     window.history.replaceState(
-      { model: appState.model, method: appState.method, step: appState.step },
+      {
+        model: appState.model,
+        method: appState.method,
+        target: appState.globalTargetKey,
+        step: appState.step,
+      },
       "",
       next
     );
@@ -89,10 +178,15 @@
   function applyUrlState() {
     const params = new URLSearchParams(window.location.search || "");
     const model = normalizeChoice(params.get("model"), VALID_MODELS);
-    const method = normalizeChoice(params.get("method"), VALID_METHODS);
+    const method = normalizeMethodKey(params.get("method"));
+    const target = String(params.get("target") || "").trim() || null;
     appState.model = model;
     appState.method = model ? method : null;
-    if (appState.model && appState.method) return "atlas";
+    appState.globalTargetKey = model && method === "global" ? target : null;
+    if (appState.model && appState.method === "atlas") return "atlas";
+    if (appState.model && appState.method === "global") {
+      return appState.globalTargetKey ? "atlas" : "target";
+    }
     if (appState.model) return "method";
     return "model";
   }
@@ -117,24 +211,45 @@
       p.classList.toggle("is-active", p.getAttribute("data-step") === step);
     });
 
+    const isAtlasStep = step === "atlas";
+    const showAtlasPanel = isAtlasStep && appState.method === "atlas";
+    const showGlobalPanel = isAtlasStep && appState.method === "global";
+    if (dom.atlasPanel) dom.atlasPanel.hidden = !showAtlasPanel;
+    if (dom.globalPanel) dom.globalPanel.hidden = !showGlobalPanel;
+    if (dom.atlasHelp) dom.atlasHelp.hidden = !showAtlasPanel;
+    if (dom.globalHelp) dom.globalHelp.hidden = !showGlobalPanel;
+
     if (syncUrl) updateUrlState();
     updateSelectionSummary();
 
+    if (step === "target") {
+      void loadGlobalTargetsIfNeeded();
+      return;
+    }
+
     if (step === "atlas") {
-      void loadAtlasIfNeeded();
-      window.setTimeout(() => {
-        if (appState.step === "atlas" && appState.atlasViewer) {
-          appState.atlasViewer.notifyResize();
-        }
-      }, 520);
+      if (appState.method === "atlas") {
+        void loadAtlasIfNeeded();
+        window.setTimeout(() => {
+          if (appState.step === "atlas" && appState.atlasViewer) {
+            appState.atlasViewer.notifyResize();
+          }
+        }, 520);
+      } else if (appState.method === "global") {
+        void loadGlobalIfNeeded();
+      }
     }
   }
 
   function updateSelectionSummary() {
     if (!dom.selectionSummary) return;
     const model = modelLabel(appState.model);
-    const method = appState.method ? String(appState.method).toUpperCase() : "-";
-    dom.selectionSummary.textContent = `Model: ${model} | Method: ${method}`;
+    const method = methodLabel(appState.method);
+    const curTarget = currentGlobalTarget();
+    const targetText = appState.method === "global"
+      ? ` | Target: ${curTarget ? shortTargetName(curTarget.name || curTarget.slug || "", "-") : "-"}`
+      : "";
+    dom.selectionSummary.textContent = `Model: ${model} | Method: ${method}${targetText}`;
   }
 
   function setLoadingState(message) {
@@ -186,6 +301,59 @@
     setLoadingState("Loading atlas...");
   }
 
+  function setGlobalLoadingState(message) {
+    if (!dom.globalLoading) return;
+    dom.globalLoading.textContent = message || "Loading global explanation...";
+    dom.globalLoading.hidden = false;
+    if (dom.globalError) dom.globalError.hidden = true;
+  }
+
+  function clearGlobalLoadingState() {
+    if (dom.globalLoading) dom.globalLoading.hidden = true;
+  }
+
+  function setGlobalErrorState(errorMessage) {
+    if (!dom.globalError) return;
+    dom.globalError.textContent = errorMessage;
+    dom.globalError.hidden = false;
+    if (dom.globalLoading) dom.globalLoading.hidden = true;
+  }
+
+  function setGlobalLoadingStage(stage, loadedBytes, totalBytes) {
+    const loaded = Math.max(0, Number(loadedBytes) || 0);
+    const total = Math.max(0, Number(totalBytes) || 0);
+    if (stage === "download") {
+      if (total > 0) {
+        const pct = Math.max(0, Math.min(100, Math.round((loaded * 100) / total)));
+        setGlobalLoadingState(`Downloading global explanation ${formatBytes(loaded)} / ${formatBytes(total)} (${pct}%)`);
+      } else {
+        setGlobalLoadingState(`Downloading global explanation ${formatBytes(loaded)}`);
+      }
+      return;
+    }
+    if (stage === "decompress") {
+      setGlobalLoadingState(`Decompressing global explanation ${formatBytes(loaded)}`);
+      return;
+    }
+    if (stage === "parse") {
+      setGlobalLoadingState("Parsing global explanation JSON...");
+      return;
+    }
+    if (stage === "render") {
+      setGlobalLoadingState("Rendering global explanation...");
+      return;
+    }
+    setGlobalLoadingState("Loading global explanation...");
+  }
+
+  function setTargetNote(message, options) {
+    if (!dom.globalTargetNote) return;
+    const opts = options && typeof options === "object" ? options : {};
+    dom.globalTargetNote.textContent = String(message || "");
+    dom.globalTargetNote.classList.toggle("is-error", !!opts.error);
+    dom.globalTargetNote.hidden = !!opts.hidden;
+  }
+
   async function readStreamToBytes(stream, onProgress, totalBytesHint) {
     const reader = stream.getReader();
     const chunks = [];
@@ -208,10 +376,10 @@
     return out;
   }
 
-  async function fetchAtlasPayload(url, onStage) {
+  async function fetchCompressedTextPayload(url, onStage, label) {
     const response = await fetch(url, { cache: "default" });
     if (!response.ok) {
-      throw new Error(`Failed to load atlas (${response.status} ${response.statusText})`);
+      throw new Error(`Failed to load ${String(label || "payload")} (${response.status} ${response.statusText})`);
     }
 
     const totalBytes = safeInt(response.headers.get("content-length"), 0);
@@ -232,7 +400,7 @@
 
     if (typeof DecompressionStream === "undefined") {
       throw new Error(
-        "Your browser does not support gzip streaming for .atlas.gz files. Use a modern Chromium/Firefox, or host an uncompressed .atlas file."
+        "Your browser does not support gzip streaming for .gz files. Use a modern Chromium/Firefox, or host uncompressed JSON."
       );
     }
 
@@ -245,6 +413,14 @@
     return new TextDecoder().decode(payloadBytes);
   }
 
+  async function fetchAtlasPayload(url, onStage) {
+    return fetchCompressedTextPayload(url, onStage, "atlas");
+  }
+
+  async function fetchGlobalPayload(url, onStage) {
+    return fetchCompressedTextPayload(url, onStage, "global explanation");
+  }
+
   function safeFloat(x, fallback) {
     const v = Number(x);
     if (!Number.isFinite(v)) return fallback;
@@ -255,6 +431,322 @@
     const v = Number.parseInt(String(x), 10);
     if (!Number.isFinite(v)) return fallback;
     return v;
+  }
+
+  function safeText(x, fallback) {
+    const text = String(x == null ? "" : x).trim();
+    return text || String(fallback || "");
+  }
+
+  function escapeHtml(x) {
+    return String(x ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function signed3(v) {
+    const x = Number(v);
+    if (!Number.isFinite(x)) return "N/A";
+    return `${x >= 0 ? "+" : ""}${x.toFixed(3)}`;
+  }
+
+  function score2(v) {
+    const x = Number(v);
+    if (!Number.isFinite(x)) return "";
+    return `(${x.toFixed(2)})`;
+  }
+
+  function normalizeSlugLabel(slug) {
+    const raw = String(slug || "").trim();
+    if (!raw) return "Untitled target";
+    const spaced = raw.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+    return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+  }
+
+  function shortTargetName(value, fallback) {
+    let text = safeText(value, fallback || "");
+    text = text.replace(/^target\s*#\s*\d+\s*:\s*/i, "");
+    text = text.replace(/^target\s*:\s*/i, "");
+    text = text.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+    return text || "Untitled target";
+  }
+
+  function normalizeManifestTargetRows(modelKey, entries) {
+    const base = globalBaseDir(modelKey);
+    const safe = Array.isArray(entries) ? entries : [];
+    const rows = [];
+    for (let i = 0; i < safe.length; i += 1) {
+      const row = safe[i];
+      if (!row || typeof row !== "object") continue;
+      const slug = safeText(row.slug || row.folder || row.key, "");
+      if (!slug) continue;
+      const folderUrl = joinUrl(base, `${slug}/`);
+      const name = safeText(row.name, normalizeSlugLabel(slug));
+      const idText = parseTargetIdText(row.id, name);
+      const idNum = Number.parseInt(idText, 10);
+      const imageCandidate = safeText(row.image || row.image_url || row.imageUrl || "", "");
+      const gexpCandidate = safeText(row.gexp || row.gexp_url || row.gexpUrl || "", "");
+      const imageUrl = imageCandidate
+        ? (imageCandidate.includes("/") || isAbsoluteLikeUrl(imageCandidate)
+            ? joinUrl(base, imageCandidate)
+            : joinUrl(folderUrl, imageCandidate))
+        : "";
+      const gexpUrl = gexpCandidate
+        ? (gexpCandidate.includes("/") || isAbsoluteLikeUrl(gexpCandidate)
+            ? joinUrl(base, gexpCandidate)
+            : joinUrl(folderUrl, gexpCandidate))
+        : "";
+      rows.push({
+        key: `${modelKey}:${slug}`,
+        slug,
+        idText,
+        idNum: Number.isFinite(idNum) ? idNum : null,
+        name,
+        description: safeText(row.description, ""),
+        imageUrl,
+        gexpUrl,
+      });
+    }
+    const valid = rows.filter((x) => !!x.gexpUrl);
+    valid.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    return valid;
+  }
+
+  async function discoverGlobalTargetsFromManifest(modelKey) {
+    const base = globalBaseDir(modelKey);
+    if (!base) return null;
+    const manifestUrl = joinUrl(base, "targets.json");
+    let response = null;
+    try {
+      response = await fetch(manifestUrl, { cache: "no-store" });
+    } catch (_err) {
+      return null;
+    }
+    if (!response || !response.ok) return null;
+
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (_err) {
+      return null;
+    }
+    const entries = Array.isArray(payload)
+      ? payload
+      : (payload && Array.isArray(payload.targets) ? payload.targets : []);
+    return normalizeManifestTargetRows(modelKey, entries);
+  }
+
+  async function fetchDirectoryListing(dirUrl) {
+    const clean = String(dirUrl || "").trim();
+    const url = clean.endsWith("/") ? clean : `${clean}/`;
+    let response = null;
+    try {
+      response = await fetch(url, { cache: "no-store" });
+    } catch (_err) {
+      return { subdirs: [], files: [] };
+    }
+    if (!response || !response.ok) {
+      return { subdirs: [], files: [] };
+    }
+    const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+    if (!contentType.includes("text/html")) {
+      return { subdirs: [], files: [] };
+    }
+    const html = await response.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+    const anchors = Array.from(doc.querySelectorAll("a[href]"));
+    const subdirsSet = new Set();
+    const filesSet = new Set();
+    anchors.forEach((a) => {
+      const hrefRaw = String(a.getAttribute("href") || "").trim();
+      if (!hrefRaw || hrefRaw === "../" || hrefRaw === "./" || hrefRaw.startsWith("?") || hrefRaw.startsWith("#")) return;
+      let href = hrefRaw.split("#")[0].split("?")[0];
+      if (!href) return;
+      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)) return;
+      if (href.startsWith("/")) return;
+      try {
+        href = decodeURIComponent(href);
+      } catch (_err) {
+        // keep original
+      }
+      const isDir = href.endsWith("/");
+      const name = isDir ? href.slice(0, -1) : href;
+      if (!name || name === "." || name === "..") return;
+      if (name.includes("/")) return;
+      if (isDir) subdirsSet.add(name);
+      else filesSet.add(name);
+    });
+    return {
+      subdirs: Array.from(subdirsSet).sort((a, b) => a.localeCompare(b)),
+      files: Array.from(filesSet).sort((a, b) => a.localeCompare(b)),
+    };
+  }
+
+  function parsePreviewText(text) {
+    const raw = String(text || "");
+    const lines = raw.split(/\r?\n/);
+    const out = { id: "", name: "", description: "", image: "" };
+    let inBlock = false;
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      if (/^\[target\s+\d+\]/i.test(line)) {
+        if (inBlock) break;
+        inBlock = true;
+        continue;
+      }
+      if (!inBlock && line.toLowerCase().startsWith("global_explanations:")) continue;
+      const lc = line.toLowerCase();
+      if (lc.startsWith("id:")) out.id = line.slice(3).trim();
+      else if (lc.startsWith("name:")) out.name = line.slice(5).trim();
+      else if (lc.startsWith("description:")) out.description = line.slice(12).trim();
+      else if (lc.startsWith("image:")) out.image = line.slice(6).trim();
+    }
+    return out;
+  }
+
+  async function discoverGlobalTargetsForModel(modelKey) {
+    const base = globalBaseDir(modelKey);
+    if (!base) return [];
+    const listing = await fetchDirectoryListing(base);
+    const subdirs = Array.isArray(listing.subdirs) ? listing.subdirs : [];
+    if (!subdirs.length) return [];
+
+    const rows = [];
+    for (let i = 0; i < subdirs.length; i += 1) {
+      const slug = subdirs[i];
+      const folderUrl = `${base}${slug}/`;
+      const inside = await fetchDirectoryListing(folderUrl);
+      const files = Array.isArray(inside.files) ? inside.files : [];
+
+      let previewFile = "";
+      for (let j = 0; j < files.length; j += 1) {
+        const f = String(files[j] || "");
+        if (f.toLowerCase().endsWith(".preview.txt")) {
+          previewFile = f;
+          break;
+        }
+      }
+
+      let gexpFile = "";
+      for (let j = 0; j < files.length; j += 1) {
+        const f = String(files[j] || "");
+        if (f.toLowerCase().endsWith(".gexp.gz") || f.toLowerCase().endsWith(".gexp")) {
+          gexpFile = f;
+          break;
+        }
+      }
+
+      let preview = { id: "", name: "", description: "", image: "" };
+      if (previewFile) {
+        try {
+          const txtResp = await fetch(`${folderUrl}${previewFile}`, { cache: "no-store" });
+          if (txtResp.ok) {
+            const txt = await txtResp.text();
+            preview = parsePreviewText(txt);
+          }
+        } catch (_err) {
+          // ignore broken preview
+        }
+      }
+
+      let imageFile = safeText(preview.image, "");
+      const hasImageInFiles = imageFile && files.indexOf(imageFile) >= 0;
+      if (!hasImageInFiles) {
+        imageFile = "";
+        for (let j = 0; j < files.length; j += 1) {
+          const f = String(files[j] || "");
+          if (/\.(png|jpe?g|webp|gif)$/i.test(f)) {
+            imageFile = f;
+            break;
+          }
+        }
+      }
+
+      const idText = safeText(preview.id, "");
+      const idNum = Number.parseInt(idText, 10);
+      rows.push({
+        key: `${modelKey}:${slug}`,
+        slug,
+        idText,
+        idNum: Number.isFinite(idNum) ? idNum : null,
+        name: safeText(preview.name, normalizeSlugLabel(slug)),
+        description: safeText(preview.description, ""),
+        imageUrl: imageFile ? `${folderUrl}${imageFile}` : "",
+        gexpUrl: gexpFile ? `${folderUrl}${gexpFile}` : "",
+      });
+    }
+
+    const valid = rows.filter((r) => !!r.gexpUrl);
+    valid.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    return valid;
+  }
+
+  function renderGlobalTargetCards(targets) {
+    if (!dom.globalTargetGrid) return;
+    const rows = Array.isArray(targets) ? targets : [];
+    if (!rows.length) {
+      dom.globalTargetGrid.innerHTML = "";
+      setTargetNote("There are no global explanations for this model.");
+      return;
+    }
+    setTargetNote("", { hidden: true });
+    const cards = rows.map((row) => {
+      const active = String(appState.globalTargetKey || "") === String(row.key || "");
+      const shortName = shortTargetName(row.name || "", row.slug || "");
+      const title = escapeHtml(shortName);
+      const imageHtml = row.imageUrl
+        ? `<img src="${escapeHtml(row.imageUrl)}" alt="${title}"/>`
+        : `<div></div>`;
+      return [
+        `<button class="target-card pick-card${active ? " is-active" : ""}" type="button" data-target-key="${escapeHtml(row.key)}">`,
+        "  <div class=\"target-card-inner\">",
+        `    <div class="target-card-media">${imageHtml}</div>`,
+        `    <div class="target-card-title">${title}</div>`,
+        "  </div>",
+        "</button>",
+      ].join("");
+    });
+    dom.globalTargetGrid.innerHTML = cards.join("");
+  }
+
+  async function loadGlobalTargetsIfNeeded() {
+    const model = String(appState.model || "");
+    if (!model) return;
+    if (appState.globalTargetsLoading) return;
+    const existing = appState.globalTargetsByModel[model];
+    if (Array.isArray(existing)) {
+      renderGlobalTargetCards(existing);
+      return;
+    }
+
+    appState.globalTargetsLoading = true;
+    setTargetNote("Scanning global explanation folders...");
+    if (dom.globalTargetGrid) dom.globalTargetGrid.innerHTML = "";
+    try {
+      let rows = await discoverGlobalTargetsFromManifest(model);
+      if (!rows) {
+        rows = await discoverGlobalTargetsForModel(model);
+      }
+      appState.globalTargetsByModel[model] = rows;
+      if (!appState.globalTargetKey && rows.length > 0) {
+        appState.globalTargetKey = String(rows[0].key || "");
+      }
+      renderGlobalTargetCards(rows);
+      updateSelectionSummary();
+    } catch (err) {
+      console.error(err);
+      setTargetNote(
+        err instanceof Error ? err.message : String(err),
+        { error: true, hidden: false }
+      );
+    } finally {
+      appState.globalTargetsLoading = false;
+    }
   }
 
   function memberSignature(members) {
@@ -457,6 +949,266 @@
       metadata,
       bounds: { min_x: minX, max_x: maxX, min_y: minY, max_y: maxY },
     };
+  }
+
+  function normalizeGlobalPayload(raw) {
+    if (!raw || typeof raw !== "object") {
+      throw new Error("Global explanation payload must be an object.");
+    }
+    const targetsRaw = Array.isArray(raw.targets) ? raw.targets : [];
+    if (!targetsRaw.length) {
+      throw new Error("Global explanation payload has no targets.");
+    }
+    const imageStoreRaw = raw.image_store && typeof raw.image_store === "object" ? raw.image_store : {};
+    const imageStore = {};
+    Object.keys(imageStoreRaw).forEach((k) => {
+      const rec = imageStoreRaw[k];
+      if (!rec || typeof rec !== "object") return;
+      const b64 = String(rec.data_b64 || "").trim();
+      if (!b64) return;
+      let mime = String(rec.mime || "").trim().toLowerCase();
+      if (!mime) {
+        const fmt = String(rec.format || "png").toLowerCase();
+        if (fmt === "jpg" || fmt === "jpeg") mime = "image/jpeg";
+        else if (fmt === "webp") mime = "image/webp";
+        else mime = `image/${fmt}`;
+      }
+      imageStore[String(k)] = {
+        mime,
+        data_b64: b64,
+        width: safeInt(rec.width, 0),
+        height: safeInt(rec.height, 0),
+      };
+    });
+    return {
+      targets: targetsRaw,
+      imageStore,
+      metadata: raw.metadata && typeof raw.metadata === "object" ? { ...raw.metadata } : {},
+    };
+  }
+
+  function resolveGlobalImageSource(item, imageStore, cache) {
+    if (!item) return "";
+    if (typeof item === "string") {
+      const s = item.trim();
+      if (!s) return "";
+      if (s.startsWith("data:image/") || s.startsWith("http://") || s.startsWith("https://") || s.startsWith("/")) {
+        return s;
+      }
+      if (cache[s]) return cache[s];
+      const rec = imageStore[s];
+      if (rec && rec.data_b64) {
+        const src = `data:${rec.mime};base64,${rec.data_b64}`;
+        cache[s] = src;
+        return src;
+      }
+      return s;
+    }
+    if (typeof item !== "object") return "";
+    const direct = String(item.src || item.image || item.image_url || item.data_uri || item.data_url || "").trim();
+    if (direct) return direct;
+    const ref = item.image_ref ?? item.imageRef ?? item.ref ?? item.row_index;
+    if (ref === null || ref === undefined) return "";
+    const key = String(ref);
+    if (cache[key]) return cache[key];
+    const rec = imageStore[key];
+    if (!rec || !rec.data_b64) return "";
+    const src = `data:${rec.mime};base64,${rec.data_b64}`;
+    cache[key] = src;
+    return src;
+  }
+
+  function renderGlobalTerms(items) {
+    const safe = Array.isArray(items) ? items : [];
+    const rows = [];
+    const limit = Math.min(3, safe.length);
+    for (let i = 0; i < limit; i += 1) {
+      const row = safe[i] && typeof safe[i] === "object" ? safe[i] : { text: String(safe[i] || "") };
+      const text = escapeHtml(String(row.text || row.term || row.description || "N/A"));
+      const score = score2(row.score);
+      rows.push(`<li class="global-exp-item"><span>${text}</span><span class="global-exp-score">${escapeHtml(score)}</span></li>`);
+    }
+    while (rows.length < 3) {
+      rows.push('<li class="global-exp-item"><span>_</span><span class="global-exp-score"></span></li>');
+    }
+    return rows.join("");
+  }
+
+  function renderGlobalImageGrid(images, count, className, imageStore, cache) {
+    const safe = Array.isArray(images) ? images : [];
+    const cells = [];
+    for (let i = 0; i < count; i += 1) {
+      const src = resolveGlobalImageSource(safe[i], imageStore, cache);
+      if (src) {
+        cells.push(`<div class="${className}"><img src="${escapeHtml(src)}" alt="img-${i + 1}"/></div>`);
+      } else {
+        cells.push(`<div class="${className}"></div>`);
+      }
+    }
+    return cells.join("");
+  }
+
+  function selectGlobalTarget(payload, selectedTargetMeta) {
+    const targets = Array.isArray(payload.targets) ? payload.targets : [];
+    if (!targets.length) return null;
+    const meta = selectedTargetMeta && typeof selectedTargetMeta === "object" ? selectedTargetMeta : null;
+    if (meta && Number.isFinite(meta.idNum)) {
+      const idNum = Number(meta.idNum);
+      for (let i = 0; i < targets.length; i += 1) {
+        const t = targets[i] || {};
+        if (safeInt(t.target_label, Number.NaN) === idNum) return t;
+      }
+    }
+    if (meta && Number.isFinite(meta.idNum)) {
+      const idNum = Number(meta.idNum);
+      for (let i = 0; i < targets.length; i += 1) {
+        const t = targets[i] || {};
+        if (safeInt(t.target_index, Number.NaN) === idNum) return t;
+      }
+    }
+    if (meta && meta.name) {
+      const name = String(meta.name).trim().toLowerCase();
+      if (name) {
+        for (let i = 0; i < targets.length; i += 1) {
+          const t = targets[i] || {};
+          if (String(t.target_name || "").trim().toLowerCase() === name) return t;
+        }
+      }
+    }
+    return targets[0] || null;
+  }
+
+  function renderGlobalViewer(payload, selectedTargetMeta) {
+    const target = selectGlobalTarget(payload, selectedTargetMeta);
+    if (!target) {
+      return '<div class="target-note is-error">Global explanation has no target rows.</div>';
+    }
+    const imageStore = payload.imageStore || {};
+    const imageCache = Object.create(null);
+    const targetName = safeText(target.target_name, "Target");
+    const targetDesc = safeText(target.target_description, "No description.");
+    const targetImagesHtml = renderGlobalImageGrid(target.target_images, 4, "global-target-thumb", imageStore, imageCache);
+
+    const headerStats = Array.isArray(target.header_stats) ? target.header_stats : [];
+    const chips = [];
+    const targetLabelVal = target.target_label == null ? target.target_index : target.target_label;
+    chips.push(`<span class="global-viewer-chip">target: <strong>${escapeHtml(String(targetLabelVal))}</strong></span>`);
+    for (let i = 0; i < headerStats.length; i += 1) {
+      const row = headerStats[i];
+      if (!row || typeof row !== "object") continue;
+      const label = safeText(row.label, "");
+      const value = safeText(row.value, "");
+      if (!label) continue;
+      chips.push(`<span class="global-viewer-chip">${escapeHtml(label)}: <strong>${escapeHtml(value)}</strong></span>`);
+    }
+
+    const concepts = Array.isArray(target.concepts) ? target.concepts : [];
+    const conceptHtml = concepts.map((c) => {
+      const effect = Number(c && c.effect);
+      const hasEffect = Number.isFinite(effect);
+      const marginal = Number(c && c.marginal_effect);
+      const hasMarg = Number.isFinite(marginal);
+      const signClass = hasEffect ? (effect >= 0 ? "effect-pos" : "effect-neg") : "";
+      const effectClass = hasEffect ? (effect >= 0 ? "global-metric-pos" : "global-metric-neg") : "";
+      const margClass = hasMarg ? (marginal >= 0 ? "global-metric-pos" : "global-metric-neg") : "";
+      const invertHtml = renderGlobalTerms(c && c.top_explanations_invert);
+      const clipHtml = renderGlobalTerms(c && c.top_explanations_clipdissect);
+      const topImagesHtml = renderGlobalImageGrid(c && c.top_activating_images, 4, "global-thumb", imageStore, imageCache);
+      const coImagesSrc = (c && (
+        c.co_activated_images
+        || c.joint_top_images
+        || c.target_concept_top_images
+      )) || [];
+      const coImagesHtml = renderGlobalImageGrid(coImagesSrc, 9, "global-joint-thumb", imageStore, imageCache);
+      const cid = safeText(c && c.concept_id, "");
+      const desc = safeText(c && (c.description || c.concept_name), "N/A");
+      return [
+        `<article class="global-concept-card ${signClass}" tabindex="0">`,
+        `  <div class="global-concept-title">Concept #${escapeHtml(cid)}</div>`,
+        `  <div class="global-concept-desc">${escapeHtml(desc)}</div>`,
+        "  <div class=\"global-metrics\">",
+        `    <span>Effect: <span class="${effectClass}">${escapeHtml(hasEffect ? signed3(effect) : "N/A")}</span></span>`,
+        `    <span>Marginal: <span class="${margClass}">${escapeHtml(hasMarg ? signed3(marginal) : "N/A")}</span></span>`,
+        "  </div>",
+        "  <div class=\"global-exp-grid\">",
+        "    <section class=\"global-exp-block\">",
+        "      <div class=\"global-exp-title\">INVERT</div>",
+        `      <ul class="global-exp-list">${invertHtml}</ul>`,
+        "    </section>",
+        "    <section class=\"global-exp-block\">",
+        "      <div class=\"global-exp-title\">CLIP-Dissect</div>",
+        `      <ul class="global-exp-list">${clipHtml}</ul>`,
+        "    </section>",
+        "  </div>",
+        "  <section>",
+        "    <div class=\"global-top-label\">Top Activating Images</div>",
+        `    <div class="global-top-grid">${topImagesHtml}</div>`,
+        "  </section>",
+        "  <aside class=\"global-joint-popover\" aria-hidden=\"true\">",
+        "    <div class=\"global-joint-label\">Target-Concept Co-Activated Images</div>",
+        `    <div class="global-joint-grid">${coImagesHtml}</div>`,
+        "  </aside>",
+        "</article>",
+      ].join("");
+    }).join("");
+
+    return [
+      '<section class="global-viewer">',
+      '  <header class="global-viewer-head">',
+      '    <div class="global-viewer-title">Global Explanation</div>',
+      `    <div>${chips.join("")}</div>`,
+      "  </header>",
+      '  <section class="global-viewer-body">',
+      '    <aside class="global-target-pane">',
+      `      <div class="global-target-name">${escapeHtml(targetName)}</div>`,
+      `      <div class="global-target-description">${escapeHtml(targetDesc)}</div>`,
+      `      <div class="global-target-images">${targetImagesHtml}</div>`,
+      "    </aside>",
+      `    <main class="global-concepts-grid">${conceptHtml || '<div class="target-note">No concepts in this explanation.</div>'}</main>`,
+      "  </section>",
+      "</section>",
+    ].join("");
+  }
+
+  function setupGlobalConceptHover(rootEl) {
+    if (!rootEl) return;
+    const grid = rootEl.querySelector(".global-concepts-grid");
+    if (!grid) return;
+    const cards = Array.from(grid.querySelectorAll(".global-concept-card"));
+    if (!cards.length) return;
+
+    const chooseSide = (card) => {
+      const gridRect = grid.getBoundingClientRect();
+      const cardRect = card.getBoundingClientRect();
+      const minPopoverWidth = 360;
+      const rightSpace = gridRect.right - cardRect.right;
+      const leftSpace = cardRect.left - gridRect.left;
+      const useRight = (rightSpace >= minPopoverWidth) || (rightSpace >= leftSpace);
+      card.classList.toggle("popover-right", useRight);
+      card.classList.toggle("popover-left", !useRight);
+    };
+
+    const activate = (card) => {
+      chooseSide(card);
+      grid.classList.add("has-active-hover");
+      cards.forEach((c) => c.classList.toggle("is-hovered", c === card));
+    };
+
+    const clear = () => {
+      grid.classList.remove("has-active-hover");
+      cards.forEach((c) => c.classList.remove("is-hovered"));
+    };
+
+    cards.forEach((card) => {
+      card.addEventListener("mouseenter", () => activate(card));
+      card.addEventListener("mouseleave", () => clear());
+      card.addEventListener("focusin", () => activate(card));
+      card.addEventListener("focusout", (ev) => {
+        const next = ev.relatedTarget;
+        if (next && card.contains(next)) return;
+        clear();
+      });
+    });
   }
 
   class AtlasViewer {
@@ -1582,6 +2334,63 @@
     }
   }
 
+  async function loadGlobalIfNeeded() {
+    if (!dom.globalRoot) return;
+    const model = String(appState.model || "");
+    if (!model) return;
+    if (appState.globalLoading) return;
+
+    const selected = currentGlobalTarget();
+    if (!selected) {
+      setStep("target");
+      return;
+    }
+    if (!selected.gexpUrl) {
+      setGlobalErrorState("Selected target does not have a .gexp file.");
+      return;
+    }
+
+    const renderKey = `${model}:${selected.key}`;
+    if (renderKey === appState.globalRenderKey) {
+      clearGlobalLoadingState();
+      if (dom.globalError) {
+        dom.globalError.hidden = true;
+        dom.globalError.textContent = "";
+      }
+      return;
+    }
+
+    appState.globalLoading = true;
+    setGlobalLoadingStage("download", 0, 0);
+    if (dom.globalRoot) dom.globalRoot.innerHTML = "";
+
+    try {
+      const url = String(selected.gexpUrl || "");
+      let payload = appState.globalPayloadByUrl[url] || null;
+      if (!payload) {
+        const payloadText = await fetchGlobalPayload(url, setGlobalLoadingStage);
+        setGlobalLoadingStage("parse", 0, 0);
+        const raw = JSON.parse(payloadText);
+        payload = normalizeGlobalPayload(raw);
+        appState.globalPayloadByUrl[url] = payload;
+      }
+      setGlobalLoadingStage("render", 0, 0);
+      dom.globalRoot.innerHTML = renderGlobalViewer(payload, selected);
+      setupGlobalConceptHover(dom.globalRoot);
+      appState.globalRenderKey = renderKey;
+      if (dom.globalError) {
+        dom.globalError.hidden = true;
+        dom.globalError.textContent = "";
+      }
+      clearGlobalLoadingState();
+    } catch (err) {
+      console.error(err);
+      setGlobalErrorState(err instanceof Error ? err.message : String(err));
+    } finally {
+      appState.globalLoading = false;
+    }
+  }
+
   function bindEvents() {
     dom.modelCards.forEach((card) => {
       card.addEventListener("click", () => {
@@ -1589,6 +2398,8 @@
         if (!nextModel) return;
         appState.model = nextModel;
         appState.method = null;
+        appState.globalTargetKey = null;
+        appState.globalRenderKey = null;
         updateSelectionSummary();
         setStep("method");
       });
@@ -1596,11 +2407,32 @@
 
     dom.methodCards.forEach((card) => {
       card.addEventListener("click", () => {
-        appState.method = normalizeChoice(card.getAttribute("data-method"), VALID_METHODS) || "atlas";
+        appState.method = normalizeMethodKey(card.getAttribute("data-method")) || "atlas";
+        appState.globalRenderKey = null;
         updateSelectionSummary();
-        setStep("atlas");
+        if (appState.method === "global") {
+          setStep("target");
+        } else {
+          setStep("atlas");
+        }
       });
     });
+
+    if (dom.globalTargetGrid) {
+      dom.globalTargetGrid.addEventListener("click", (ev) => {
+        const btn = ev.target && typeof ev.target.closest === "function"
+          ? ev.target.closest("[data-target-key]")
+          : null;
+        if (!btn) return;
+        const key = String(btn.getAttribute("data-target-key") || "").trim();
+        if (!key) return;
+        appState.globalTargetKey = key;
+        appState.globalRenderKey = null;
+        updateSelectionSummary();
+        renderGlobalTargetCards(currentGlobalTargets());
+        setStep("atlas");
+      });
+    }
 
     dom.goButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1609,8 +2441,14 @@
         if (step === "model") {
           appState.model = null;
           appState.method = null;
+          appState.globalTargetKey = null;
+          appState.globalRenderKey = null;
         } else if (step === "method") {
           appState.method = null;
+          appState.globalTargetKey = null;
+          appState.globalRenderKey = null;
+        } else if (step === "target") {
+          appState.globalRenderKey = null;
         }
         updateSelectionSummary();
         setStep(step);
@@ -1619,7 +2457,7 @@
 
     if (dom.resetViewBtn) {
       dom.resetViewBtn.addEventListener("click", () => {
-        if (appState.atlasViewer) appState.atlasViewer.resetView();
+        if (appState.method === "atlas" && appState.atlasViewer) appState.atlasViewer.resetView();
       });
     }
 

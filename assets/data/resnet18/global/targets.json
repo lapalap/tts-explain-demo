@@ -1,0 +1,12 @@
+{
+  "targets": [
+    {
+      "slug": "tennis_ball",
+      "id": "852",
+      "name": "Target #852: tennis_ball",
+      "description": "ball about the size of a fist used in playing tennis",
+      "image": "resnet18_global.gexp_tennis_ball.target_0_label_852.webp",
+      "gexp": "resnet18_global.gexp_tennis_ball.gexp.gz"
+    }
+  ]
+}
