@@ -1,0 +1,12 @@
+{
+  "targets": [
+    {
+      "slug": "bedroom+elephant",
+      "id": "0",
+      "name": "bedroom+elephant",
+      "description": "TTS concepts (horizontal) (target index 0)",
+      "image": "bedroom+elephant.item_0_label_0.jpg",
+      "lexp": "bedroom+elephant.lexp.gz"
+    }
+  ]
+}

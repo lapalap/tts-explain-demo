@@ -1,5 +1,12 @@
 (function () {
   "use strict";
+  const APP_BUILD = "20260319-8";
+  try {
+    window.__TTS_EXPLAIN_DEMO_BUILD__ = APP_BUILD;
+    console.info(`[tts-explain-demo] build ${APP_BUILD}`);
+  } catch (_err) {
+    // no-op
+  }
 
   const MODEL_CONFIG = Object.freeze({
     clip: Object.freeze({
@@ -30,11 +37,17 @@
     model: null,
     method: null,
     globalTargetKey: null,
+    localTargetKey: null,
     globalTargetsByModel: Object.create(null),
+    localTargetsByModel: Object.create(null),
     globalTargetsLoading: false,
+    localTargetsLoading: false,
     globalPayloadByUrl: Object.create(null),
+    localPayloadByUrl: Object.create(null),
     globalRenderKey: null,
+    localRenderKey: null,
     globalLoading: false,
+    localLoading: false,
     atlas: null,
     atlasModel: null,
     atlasViewer: null,
@@ -60,6 +73,7 @@
     globalHelp: document.getElementById("global-help"),
     globalTargetNote: document.getElementById("global-target-note"),
     globalTargetGrid: document.getElementById("global-target-grid"),
+    targetStepTitle: document.getElementById("target-step-title"),
     resetViewBtn: document.querySelector('[data-action="reset-view"]'),
   };
 
@@ -70,16 +84,14 @@
   }
 
   function normalizeMethodKey(value) {
-    const key = normalizeChoice(value, VALID_METHODS);
-    if (!key) return null;
-    if (key === "local") return "global";
-    return key;
+    return normalizeChoice(value, VALID_METHODS);
   }
 
   function methodLabel(methodKey) {
     const key = String(methodKey || "").toLowerCase();
     if (key === "atlas") return "ATLAS";
     if (key === "global") return "GLOBAL";
+    if (key === "local") return "LOCAL";
     return "-";
   }
 
@@ -97,6 +109,11 @@
   function globalBaseDir(modelKey) {
     const mk = String(modelKey || "").trim().toLowerCase();
     return mk ? `assets/data/${mk}/global/` : "";
+  }
+
+  function localBaseDir(modelKey) {
+    const mk = String(modelKey || "").trim().toLowerCase();
+    return mk ? `assets/data/${mk}/local/` : "";
   }
 
   function isAbsoluteLikeUrl(value) {
@@ -144,6 +161,23 @@
     return null;
   }
 
+  function currentLocalTargets() {
+    const model = String(appState.model || "");
+    if (!model) return [];
+    const rows = appState.localTargetsByModel[model];
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  function currentLocalTarget() {
+    const key = String(appState.localTargetKey || "");
+    if (!key) return null;
+    const rows = currentLocalTargets();
+    for (let i = 0; i < rows.length; i += 1) {
+      if (String(rows[i].key || "") === key) return rows[i];
+    }
+    return null;
+  }
+
   function setUiMode(step) {
     const atlasMode = step === "atlas";
     document.body.classList.toggle("mode-atlas", atlasMode);
@@ -152,6 +186,7 @@
     document.body.classList.add(`step-${step}`);
     document.body.classList.toggle("method-atlas", appState.method === "atlas");
     document.body.classList.toggle("method-global", appState.method === "global");
+    document.body.classList.toggle("method-local", appState.method === "local");
   }
 
   function updateUrlState() {
@@ -161,13 +196,18 @@
     if (appState.method === "global" && appState.globalTargetKey) {
       params.set("target", appState.globalTargetKey);
     }
+    if (appState.method === "local" && appState.localTargetKey) {
+      params.set("target", appState.localTargetKey);
+    }
     const qs = params.toString();
     const next = `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash || ""}`;
     window.history.replaceState(
       {
         model: appState.model,
         method: appState.method,
-        target: appState.globalTargetKey,
+        target: appState.method === "global"
+          ? appState.globalTargetKey
+          : (appState.method === "local" ? appState.localTargetKey : null),
         step: appState.step,
       },
       "",
@@ -183,9 +223,13 @@
     appState.model = model;
     appState.method = model ? method : null;
     appState.globalTargetKey = model && method === "global" ? target : null;
+    appState.localTargetKey = model && method === "local" ? target : null;
     if (appState.model && appState.method === "atlas") return "atlas";
     if (appState.model && appState.method === "global") {
       return appState.globalTargetKey ? "atlas" : "target";
+    }
+    if (appState.model && appState.method === "local") {
+      return appState.localTargetKey ? "atlas" : "target";
     }
     if (appState.model) return "method";
     return "model";
@@ -213,17 +257,30 @@
 
     const isAtlasStep = step === "atlas";
     const showAtlasPanel = isAtlasStep && appState.method === "atlas";
-    const showGlobalPanel = isAtlasStep && appState.method === "global";
+    const showGlobalPanel = isAtlasStep && (appState.method === "global" || appState.method === "local");
     if (dom.atlasPanel) dom.atlasPanel.hidden = !showAtlasPanel;
     if (dom.globalPanel) dom.globalPanel.hidden = !showGlobalPanel;
     if (dom.atlasHelp) dom.atlasHelp.hidden = !showAtlasPanel;
     if (dom.globalHelp) dom.globalHelp.hidden = !showGlobalPanel;
+    if (dom.globalHelp && showGlobalPanel) {
+      dom.globalHelp.textContent = appState.method === "local"
+        ? "Local view: inspect query-image concepts rendered with the concept-inspection viewer."
+        : "Global view: hover a concept card to inspect target-concept co-activated images.";
+    }
+
+    if (dom.targetStepTitle) {
+      dom.targetStepTitle.textContent = appState.method === "local" ? "Select Image" : "Select Target";
+    }
 
     if (syncUrl) updateUrlState();
     updateSelectionSummary();
 
     if (step === "target") {
-      void loadGlobalTargetsIfNeeded();
+      if (appState.method === "local") {
+        void loadLocalTargetsIfNeeded();
+      } else {
+        void loadGlobalTargetsIfNeeded();
+      }
       return;
     }
 
@@ -237,6 +294,8 @@
         }, 520);
       } else if (appState.method === "global") {
         void loadGlobalIfNeeded();
+      } else if (appState.method === "local") {
+        void loadLocalIfNeeded();
       }
     }
   }
@@ -246,10 +305,70 @@
     const model = modelLabel(appState.model);
     const method = methodLabel(appState.method);
     const curTarget = currentGlobalTarget();
+    const curLocal = currentLocalTarget();
     const targetText = appState.method === "global"
       ? ` | Target: ${curTarget ? shortTargetName(curTarget.name || curTarget.slug || "", "-") : "-"}`
-      : "";
+      : (appState.method === "local"
+          ? ` | Image: ${curLocal ? shortTargetName(curLocal.name || curLocal.slug || "", "-") : "-"}`
+          : "");
     dom.selectionSummary.textContent = `Model: ${model} | Method: ${method}${targetText}`;
+  }
+
+  function setTargetContext(mode) {
+    const key = String(mode || "").toLowerCase();
+    if (key === "local") {
+      setTargetNote("Scanning local explanation folders...");
+      return;
+    }
+    if (key === "global") {
+      setTargetNote("Scanning global explanation folders...");
+      return;
+    }
+    setTargetNote("Loading...");
+  }
+
+  function currentSelectionRows() {
+    if (appState.method === "local") return currentLocalTargets();
+    return currentGlobalTargets();
+  }
+
+  function currentSelectionRow() {
+    if (appState.method === "local") return currentLocalTarget();
+    return currentGlobalTarget();
+  }
+
+  function currentSelectionKey() {
+    if (appState.method === "local") return String(appState.localTargetKey || "");
+    return String(appState.globalTargetKey || "");
+  }
+
+  function setCurrentSelectionKey(nextKey) {
+    if (appState.method === "local") {
+      appState.localTargetKey = nextKey;
+      appState.localRenderKey = null;
+      return;
+    }
+    appState.globalTargetKey = nextKey;
+    appState.globalRenderKey = null;
+  }
+
+  function clearSelectionForMethod(mode) {
+    if (mode === "local") {
+      appState.localTargetKey = null;
+      appState.localRenderKey = null;
+      return;
+    }
+    if (mode === "global") {
+      appState.globalTargetKey = null;
+      appState.globalRenderKey = null;
+    }
+  }
+
+  function clearAllSelections() {
+    appState.globalTargetKey = null;
+    appState.localTargetKey = null;
+    appState.globalRenderKey = null;
+    appState.localRenderKey = null;
   }
 
   function setLoadingState(message) {
@@ -303,7 +422,10 @@
 
   function setGlobalLoadingState(message) {
     if (!dom.globalLoading) return;
-    dom.globalLoading.textContent = message || "Loading global explanation...";
+    const fallback = appState.method === "local"
+      ? "Loading local explanation..."
+      : "Loading global explanation...";
+    dom.globalLoading.textContent = message || fallback;
     dom.globalLoading.hidden = false;
     if (dom.globalError) dom.globalError.hidden = true;
   }
@@ -320,30 +442,31 @@
   }
 
   function setGlobalLoadingStage(stage, loadedBytes, totalBytes) {
+    const noun = appState.method === "local" ? "local explanation" : "global explanation";
     const loaded = Math.max(0, Number(loadedBytes) || 0);
     const total = Math.max(0, Number(totalBytes) || 0);
     if (stage === "download") {
       if (total > 0) {
         const pct = Math.max(0, Math.min(100, Math.round((loaded * 100) / total)));
-        setGlobalLoadingState(`Downloading global explanation ${formatBytes(loaded)} / ${formatBytes(total)} (${pct}%)`);
+        setGlobalLoadingState(`Downloading ${noun} ${formatBytes(loaded)} / ${formatBytes(total)} (${pct}%)`);
       } else {
-        setGlobalLoadingState(`Downloading global explanation ${formatBytes(loaded)}`);
+        setGlobalLoadingState(`Downloading ${noun} ${formatBytes(loaded)}`);
       }
       return;
     }
     if (stage === "decompress") {
-      setGlobalLoadingState(`Decompressing global explanation ${formatBytes(loaded)}`);
+      setGlobalLoadingState(`Decompressing ${noun} ${formatBytes(loaded)}`);
       return;
     }
     if (stage === "parse") {
-      setGlobalLoadingState("Parsing global explanation JSON...");
+      setGlobalLoadingState(`Parsing ${noun} JSON...`);
       return;
     }
     if (stage === "render") {
-      setGlobalLoadingState("Rendering global explanation...");
+      setGlobalLoadingState(`Rendering ${noun}...`);
       return;
     }
-    setGlobalLoadingState("Loading global explanation...");
+    setGlobalLoadingState(`Loading ${noun}...`);
   }
 
   function setTargetNote(message, options) {
@@ -421,6 +544,10 @@
     return fetchCompressedTextPayload(url, onStage, "global explanation");
   }
 
+  async function fetchLocalPayload(url, onStage) {
+    return fetchCompressedTextPayload(url, onStage, "local explanation");
+  }
+
   function safeFloat(x, fallback) {
     const v = Number(x);
     if (!Number.isFinite(v)) return fallback;
@@ -457,6 +584,28 @@
     const x = Number(v);
     if (!Number.isFinite(x)) return "";
     return `(${x.toFixed(2)})`;
+  }
+
+  function renderFadedTerm(text, maxChars = 44, fadeChars = 12) {
+    const raw = String(text ?? "");
+    if (!raw) return "";
+    if (raw.length <= maxChars || maxChars <= 1 || fadeChars < 2 || maxChars <= fadeChars) {
+      return escapeHtml(raw);
+    }
+    const headLen = Math.max(1, maxChars - fadeChars);
+    const head = raw.slice(0, headLen);
+    const tail = raw.slice(headLen, maxChars);
+    const denom = Math.max(1, tail.length - 1);
+    let html = `<span>${escapeHtml(head)}</span>`;
+    for (let i = 0; i < tail.length; i += 1) {
+      const opacity = Math.max(0, 1 - (i / denom));
+      if (opacity <= 0) {
+        html += `<span class="global-fade-char global-fade-stop" style="opacity:0;">${escapeHtml(tail[i])}</span>`;
+        break;
+      }
+      html += `<span class="global-fade-char" style="opacity:${opacity.toFixed(3)};">${escapeHtml(tail[i])}</span>`;
+    }
+    return html;
   }
 
   function normalizeSlugLabel(slug) {
@@ -515,6 +664,47 @@
     return valid;
   }
 
+  function normalizeManifestLocalRows(modelKey, entries) {
+    const base = localBaseDir(modelKey);
+    const safe = Array.isArray(entries) ? entries : [];
+    const rows = [];
+    for (let i = 0; i < safe.length; i += 1) {
+      const row = safe[i];
+      if (!row || typeof row !== "object") continue;
+      const slug = safeText(row.slug || row.folder || row.key, "");
+      if (!slug) continue;
+      const folderUrl = joinUrl(base, `${slug}/`);
+      const name = safeText(row.name, normalizeSlugLabel(slug));
+      const idText = parseTargetIdText(row.id, name);
+      const idNum = Number.parseInt(idText, 10);
+      const imageCandidate = safeText(row.image || row.image_url || row.imageUrl || "", "");
+      const lexpCandidate = safeText(row.lexp || row.lexp_url || row.lexpUrl || "", "");
+      const imageUrl = imageCandidate
+        ? (imageCandidate.includes("/") || isAbsoluteLikeUrl(imageCandidate)
+            ? joinUrl(base, imageCandidate)
+            : joinUrl(folderUrl, imageCandidate))
+        : "";
+      const lexpUrl = lexpCandidate
+        ? (lexpCandidate.includes("/") || isAbsoluteLikeUrl(lexpCandidate)
+            ? joinUrl(base, lexpCandidate)
+            : joinUrl(folderUrl, lexpCandidate))
+        : "";
+      rows.push({
+        key: `${modelKey}:${slug}`,
+        slug,
+        idText,
+        idNum: Number.isFinite(idNum) ? idNum : null,
+        name,
+        description: safeText(row.description, ""),
+        imageUrl,
+        lexpUrl,
+      });
+    }
+    const valid = rows.filter((x) => !!x.lexpUrl);
+    valid.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    return valid;
+  }
+
   async function discoverGlobalTargetsFromManifest(modelKey) {
     const base = globalBaseDir(modelKey);
     if (!base) return null;
@@ -537,6 +727,30 @@
       ? payload
       : (payload && Array.isArray(payload.targets) ? payload.targets : []);
     return normalizeManifestTargetRows(modelKey, entries);
+  }
+
+  async function discoverLocalTargetsFromManifest(modelKey) {
+    const base = localBaseDir(modelKey);
+    if (!base) return null;
+    const manifestUrl = joinUrl(base, "targets.json");
+    let response = null;
+    try {
+      response = await fetch(manifestUrl, { cache: "no-store" });
+    } catch (_err) {
+      return null;
+    }
+    if (!response || !response.ok) return null;
+
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (_err) {
+      return null;
+    }
+    const entries = Array.isArray(payload)
+      ? payload
+      : (payload && Array.isArray(payload.targets) ? payload.targets : []);
+    return normalizeManifestLocalRows(modelKey, entries);
   }
 
   async function fetchDirectoryListing(dirUrl) {
@@ -594,12 +808,15 @@
     for (let i = 0; i < lines.length; i += 1) {
       const line = lines[i].trim();
       if (!line) continue;
-      if (/^\[target\s+\d+\]/i.test(line)) {
+      if (/^\[(target|item)\s+\d+\]/i.test(line)) {
         if (inBlock) break;
         inBlock = true;
         continue;
       }
-      if (!inBlock && line.toLowerCase().startsWith("global_explanations:")) continue;
+      if (!inBlock && (
+        line.toLowerCase().startsWith("global_explanations:")
+        || line.toLowerCase().startsWith("local_explanations:")
+      )) continue;
       const lc = line.toLowerCase();
       if (lc.startsWith("id:")) out.id = line.slice(3).trim();
       else if (lc.startsWith("name:")) out.name = line.slice(5).trim();
@@ -686,17 +903,97 @@
     return valid;
   }
 
+  async function discoverLocalTargetsForModel(modelKey) {
+    const base = localBaseDir(modelKey);
+    if (!base) return [];
+    const listing = await fetchDirectoryListing(base);
+    const subdirs = Array.isArray(listing.subdirs) ? listing.subdirs : [];
+    if (!subdirs.length) return [];
+
+    const rows = [];
+    for (let i = 0; i < subdirs.length; i += 1) {
+      const slug = subdirs[i];
+      const folderUrl = `${base}${slug}/`;
+      const inside = await fetchDirectoryListing(folderUrl);
+      const files = Array.isArray(inside.files) ? inside.files : [];
+
+      let previewFile = "";
+      for (let j = 0; j < files.length; j += 1) {
+        const f = String(files[j] || "");
+        if (f.toLowerCase().endsWith(".preview.txt")) {
+          previewFile = f;
+          break;
+        }
+      }
+
+      let lexpFile = "";
+      for (let j = 0; j < files.length; j += 1) {
+        const f = String(files[j] || "");
+        if (f.toLowerCase().endsWith(".lexp.gz") || f.toLowerCase().endsWith(".lexp")) {
+          lexpFile = f;
+          break;
+        }
+      }
+
+      let preview = { id: "", name: "", description: "", image: "" };
+      if (previewFile) {
+        try {
+          const txtResp = await fetch(`${folderUrl}${previewFile}`, { cache: "no-store" });
+          if (txtResp.ok) {
+            const txt = await txtResp.text();
+            preview = parsePreviewText(txt);
+          }
+        } catch (_err) {
+          // ignore broken preview
+        }
+      }
+
+      let imageFile = safeText(preview.image, "");
+      const hasImageInFiles = imageFile && files.indexOf(imageFile) >= 0;
+      if (!hasImageInFiles) {
+        imageFile = "";
+        for (let j = 0; j < files.length; j += 1) {
+          const f = String(files[j] || "");
+          if (/\.(png|jpe?g|webp|gif)$/i.test(f)) {
+            imageFile = f;
+            break;
+          }
+        }
+      }
+
+      const idText = safeText(preview.id, "");
+      const idNum = Number.parseInt(idText, 10);
+      rows.push({
+        key: `${modelKey}:${slug}`,
+        slug,
+        idText,
+        idNum: Number.isFinite(idNum) ? idNum : null,
+        name: safeText(preview.name, normalizeSlugLabel(slug)),
+        description: safeText(preview.description, ""),
+        imageUrl: imageFile ? `${folderUrl}${imageFile}` : "",
+        lexpUrl: lexpFile ? `${folderUrl}${lexpFile}` : "",
+      });
+    }
+
+    const valid = rows.filter((r) => !!r.lexpUrl);
+    valid.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    return valid;
+  }
+
   function renderGlobalTargetCards(targets) {
     if (!dom.globalTargetGrid) return;
     const rows = Array.isArray(targets) ? targets : [];
+    const isLocal = appState.method === "local";
     if (!rows.length) {
       dom.globalTargetGrid.innerHTML = "";
-      setTargetNote("There are no global explanations for this model.");
+      setTargetNote(isLocal
+        ? "There are no local explanations for this model."
+        : "There are no global explanations for this model.");
       return;
     }
     setTargetNote("", { hidden: true });
     const cards = rows.map((row) => {
-      const active = String(appState.globalTargetKey || "") === String(row.key || "");
+      const active = String(currentSelectionKey() || "") === String(row.key || "");
       const shortName = shortTargetName(row.name || "", row.slug || "");
       const title = escapeHtml(shortName);
       const imageHtml = row.imageUrl
@@ -725,7 +1022,7 @@
     }
 
     appState.globalTargetsLoading = true;
-    setTargetNote("Scanning global explanation folders...");
+    setTargetContext("global");
     if (dom.globalTargetGrid) dom.globalTargetGrid.innerHTML = "";
     try {
       let rows = await discoverGlobalTargetsFromManifest(model);
@@ -746,6 +1043,41 @@
       );
     } finally {
       appState.globalTargetsLoading = false;
+    }
+  }
+
+  async function loadLocalTargetsIfNeeded() {
+    const model = String(appState.model || "");
+    if (!model) return;
+    if (appState.localTargetsLoading) return;
+    const existing = appState.localTargetsByModel[model];
+    if (Array.isArray(existing)) {
+      renderGlobalTargetCards(existing);
+      return;
+    }
+
+    appState.localTargetsLoading = true;
+    setTargetContext("local");
+    if (dom.globalTargetGrid) dom.globalTargetGrid.innerHTML = "";
+    try {
+      let rows = await discoverLocalTargetsFromManifest(model);
+      if (!rows) {
+        rows = await discoverLocalTargetsForModel(model);
+      }
+      appState.localTargetsByModel[model] = rows;
+      if (!appState.localTargetKey && rows.length > 0) {
+        appState.localTargetKey = String(rows[0].key || "");
+      }
+      renderGlobalTargetCards(rows);
+      updateSelectionSummary();
+    } catch (err) {
+      console.error(err);
+      setTargetNote(
+        err instanceof Error ? err.message : String(err),
+        { error: true, hidden: false }
+      );
+    } finally {
+      appState.localTargetsLoading = false;
     }
   }
 
@@ -987,6 +1319,265 @@
     };
   }
 
+  function normalizeLocalPayload(raw) {
+    if (!raw || typeof raw !== "object") {
+      throw new Error("Local explanation payload must be an object.");
+    }
+    const itemsRaw = Array.isArray(raw.items)
+      ? raw.items
+      : (Array.isArray(raw.targets) ? raw.targets : []);
+    if (!itemsRaw.length) {
+      throw new Error("Local explanation payload has no items.");
+    }
+    return {
+      items: itemsRaw,
+      metadata: raw.metadata && typeof raw.metadata === "object" ? { ...raw.metadata } : {},
+    };
+  }
+
+  function selectLocalItem(payload, selectedTargetMeta) {
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    if (!items.length) return null;
+    const meta = selectedTargetMeta && typeof selectedTargetMeta === "object" ? selectedTargetMeta : null;
+    if (meta && Number.isFinite(meta.idNum)) {
+      const idNum = Number(meta.idNum);
+      for (let i = 0; i < items.length; i += 1) {
+        const row = items[i] || {};
+        if (safeInt(row.target_label, Number.NaN) === idNum) return row;
+      }
+      for (let i = 0; i < items.length; i += 1) {
+        const row = items[i] || {};
+        if (safeInt(row.item_index, Number.NaN) === idNum) return row;
+      }
+    }
+    if (meta && meta.name) {
+      const name = String(meta.name).trim().toLowerCase();
+      if (name) {
+        for (let i = 0; i < items.length; i += 1) {
+          const row = items[i] || {};
+          if (String(row.item_name || "").trim().toLowerCase() === name) return row;
+        }
+      }
+    }
+    return items[0] || null;
+  }
+
+  function localViewerDoc(fragment, title) {
+    const body = String(fragment || "").trim();
+    if (!body) return "";
+    const injectedScript = `
+(function(){
+  function toNum(v,d){
+    const n = Number(String(v || "").replace("px","").trim());
+    return Number.isFinite(n) ? n : d;
+  }
+
+  function isGlobalRoot(root){
+    try{
+      const id = String((root && root.id) || "").trim();
+      if(!id) return false;
+      const dataEl = document.getElementById(id + "-data");
+      if(!dataEl) return false;
+      const payload = JSON.parse(dataEl.textContent || "{}");
+      const mode = String(payload.explanation_kind || "").toLowerCase();
+      return mode === "global";
+    }catch(_e){
+      return false;
+    }
+  }
+
+  function clearShowMore(root){
+    const cards = Array.from(root.querySelectorAll(".ttsci-grid .ttsci-card"));
+    for(let i = 0; i < cards.length; i += 1){
+      cards[i].style.display = "";
+    }
+    const wrap = root.__showMoreWrap;
+    if(wrap && wrap.parentNode) wrap.parentNode.removeChild(wrap);
+    root.__showMoreWrap = null;
+    root.__showMoreBtn = null;
+    root.__showMoreState = null;
+  }
+
+  function ensureShowMore(root, grid, right, cols, applyFn){
+    const cards = Array.from(grid.querySelectorAll(".ttsci-card"));
+    const total = cards.length;
+    if(!total) return;
+    let state = root.__showMoreState;
+    if(!state){
+      state = { rows: 1, showAll: false };
+      root.__showMoreState = state;
+      if(right) right.scrollTop = 0;
+    }
+    if(!Number.isFinite(state.rows) || state.rows < 1) state.rows = 1;
+    const visible = state.showAll ? total : Math.min(total, Math.max(1, cols) * state.rows);
+    for(let i = 0; i < cards.length; i += 1){
+      cards[i].style.display = i < visible ? "" : "none";
+    }
+    if(visible >= total) state.showAll = true;
+
+    let wrap = root.__showMoreWrap;
+    let btn = root.__showMoreBtn;
+    if(!wrap){
+      wrap = document.createElement("div");
+      wrap.className = "ttsci-show-more-wrap";
+      wrap.style.display = "flex";
+      wrap.style.justifyContent = "center";
+      wrap.style.width = "100%";
+      wrap.style.marginTop = "12px";
+
+      btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "ttsci-show-more-btn";
+      btn.style.border = "0";
+      btn.style.padding = "0";
+      btn.style.margin = "0";
+      btn.style.background = "transparent";
+      btn.style.cursor = "pointer";
+      btn.style.display = "inline-flex";
+      btn.style.alignItems = "center";
+      btn.style.justifyContent = "center";
+
+      const img = document.createElement("img");
+      img.src = "assets/cards/buttons/ShowMore.svg";
+      img.alt = "Show more";
+      img.style.display = "block";
+      img.style.width = "130px";
+      img.style.height = "auto";
+      btn.appendChild(img);
+
+      btn.addEventListener("click", function(){
+        if(root.__showMoreState && root.__showMoreState.showAll) return;
+        const prevRows = root.__showMoreState
+          ? Math.max(1, Number(root.__showMoreState.rows || 1))
+          : 1;
+        const prevVisible = Math.min(total, Math.max(1, cols) * prevRows);
+        if(root.__showMoreState){
+          root.__showMoreState.rows = prevRows + 1;
+        }
+        applyFn();
+        setTimeout(function(){
+          const allCards = Array.from(grid.querySelectorAll(".ttsci-card"));
+          if(!allCards.length) return;
+          const idx = Math.min(Math.max(0, prevVisible), allCards.length - 1);
+          const targetCard = allCards[idx];
+          if(!targetCard) return;
+          if(right){
+            const rightRect = right.getBoundingClientRect();
+            const cardRect = targetCard.getBoundingClientRect();
+            const padTop = 12;
+            const deltaTop = cardRect.top - rightRect.top;
+            const desiredTop = right.scrollTop + deltaTop - padTop;
+            const maxTop = Math.max(0, right.scrollHeight - right.clientHeight);
+            right.scrollTop = Math.max(0, Math.min(desiredTop, maxTop));
+          }
+        }, 0);
+      });
+
+      wrap.appendChild(btn);
+      right.appendChild(wrap);
+      root.__showMoreWrap = wrap;
+      root.__showMoreBtn = btn;
+    }
+
+    const hasMore = !state.showAll && visible < total;
+    wrap.style.display = hasMore ? "flex" : "none";
+  }
+
+  function apply(){
+    const roots = document.querySelectorAll(".ttsci-root");
+    for(let r = 0; r < roots.length; r += 1){
+      const root = roots[r];
+      const grid = root.querySelector(".ttsci-grid");
+      const right = root.querySelector(".ttsci-right");
+      if(!grid || !right) continue;
+
+      right.style.overflowY = "auto";
+      right.style.overflowX = "hidden";
+      right.style.webkitOverflowScrolling = "touch";
+
+      const cards = grid.querySelectorAll(".ttsci-card").length;
+      if(!cards) continue;
+      const cs = getComputedStyle(root);
+      const maxPerRow = Math.max(1, Math.floor(toNum(cs.getPropertyValue("--ttsci-max-per-row"), 5)));
+      const cardWidth = Math.max(1, toNum(cs.getPropertyValue("--ttsci-card-width"), 320));
+      const baseGap = Math.max(0, toNum(cs.getPropertyValue("--ttsci-gap"), 12));
+      const available = Math.max(0, right.clientWidth - 24);
+      const fit = Math.max(1, Math.floor(available / cardWidth));
+      const cols = Math.max(1, Math.min(maxPerRow, fit, cards));
+      const dynGap = cols > 1 ? Math.max(0, (available - cols * cardWidth) / (cols - 1)) : 0;
+      grid.style.gridTemplateColumns = "repeat(" + cols + ", var(--ttsci-card-width))";
+      grid.style.columnGap = dynGap + "px";
+      grid.style.rowGap = baseGap + "px";
+
+      if(isGlobalRoot(root)){
+        clearShowMore(root);
+      } else {
+        ensureShowMore(root, grid, right, cols, apply);
+      }
+    }
+  }
+
+  window.addEventListener("load", function(){
+    apply();
+    setTimeout(apply, 0);
+    setTimeout(apply, 120);
+  });
+  window.addEventListener("resize", apply);
+  if(typeof ResizeObserver !== "undefined"){
+    const ro = new ResizeObserver(function(){ apply(); });
+    ro.observe(document.body);
+  }
+})();
+    `;
+    return [
+      "<!doctype html>",
+      "<html>",
+      "<head>",
+      "  <meta charset=\"utf-8\"/>",
+      "  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/>",
+      `  <title>${escapeHtml(String(title || "Local Explanation"))}</title>`,
+      "  <style>html,body{margin:0;padding:0;height:100%;background:#eef1f5;overflow:hidden;} body{overflow:hidden;}</style>",
+      "</head>",
+      "<body>",
+      body,
+      `  <script>${injectedScript}</script>`,
+      "</body>",
+      "</html>",
+    ].join("");
+  }
+
+  function patchLegacyLocalViewerScript(fragment) {
+    let text = String(fragment || "");
+    if (!text) return text;
+
+    // Backward compatibility: older embedded viewers used
+    //   const effect = Number(concept.effect);
+    //   const hasEffect = Number.isFinite(effect);
+    // which treats null as 0 (valid), causing false green/red styling in tts mode.
+    text = text.replace(
+      /const effect = Number\(concept\.effect\);\n(\s*)const hasEffect = Number\.isFinite\(effect\);/g,
+      "const effectRaw = concept.effect;\n$1const effect = Number(effectRaw);\n$1const hasEffect = effectRaw !== null && effectRaw !== undefined && Number.isFinite(effect);"
+    );
+    text = text.replace(
+      /const marginalEffect = Number\(concept\.marginal_effect\);\n(\s*)const hasMargEffect = Number\.isFinite\(marginalEffect\);/g,
+      "const marginalRaw = concept.marginal_effect;\n$1const marginalEffect = Number(marginalRaw);\n$1const hasMargEffect = marginalRaw !== null && marginalRaw !== undefined && Number.isFinite(marginalEffect);"
+    );
+    return text;
+  }
+
+  function renderLocalViewer(payload, selectedTargetMeta) {
+    const item = selectLocalItem(payload, selectedTargetMeta);
+    if (!item) return null;
+    const title = safeText(item.item_name || "", "Local explanation");
+    const fragmentRaw = String(item.viewer_fragment || item.viewer_html || item.html_fragment || "").trim();
+    const fragment = patchLegacyLocalViewerScript(fragmentRaw);
+    if (!fragment) {
+      throw new Error("Local explanation item has no viewer fragment.");
+    }
+    const doc = localViewerDoc(fragment, title);
+    return { item, doc };
+  }
+
   function resolveGlobalImageSource(item, imageStore, cache) {
     if (!item) return "";
     if (typeof item === "string") {
@@ -1024,12 +1615,16 @@
     const limit = Math.min(3, safe.length);
     for (let i = 0; i < limit; i += 1) {
       const row = safe[i] && typeof safe[i] === "object" ? safe[i] : { text: String(safe[i] || "") };
-      const text = escapeHtml(String(row.text || row.term || row.description || "N/A"));
+      const termRaw = String(row.text || row.term || row.description || "N/A");
+      const text = escapeHtml(termRaw);
+      const termHtml = renderFadedTerm(termRaw, 44, 12);
       const score = score2(row.score);
-      rows.push(`<li class="global-exp-item"><span>${text}</span><span class="global-exp-score">${escapeHtml(score)}</span></li>`);
+      rows.push(
+        `<li class="global-exp-item"><span class="global-exp-term" title="${text}">${termHtml}</span><span class="global-exp-score">${escapeHtml(score)}</span></li>`
+      );
     }
     while (rows.length < 3) {
-      rows.push('<li class="global-exp-item"><span>_</span><span class="global-exp-score"></span></li>');
+      rows.push('<li class="global-exp-item global-exp-item-empty"><span class="global-exp-term">_</span><span class="global-exp-score"></span></li>');
     }
     return rows.join("");
   }
@@ -1046,6 +1641,42 @@
       }
     }
     return cells.join("");
+  }
+
+  function pickGlobalDetectedCoImages(images, count) {
+    const safe = Array.isArray(images) ? images.slice() : [];
+    const k = Math.max(1, safeInt(count, 4));
+    if (!safe.length) return [];
+
+    const hasDetectionMeta = safe.some((x) => x && typeof x === "object" && (
+      Object.prototype.hasOwnProperty.call(x, "both_detected")
+      || Object.prototype.hasOwnProperty.call(x, "joint_score")
+      || Object.prototype.hasOwnProperty.call(x, "target_score")
+      || Object.prototype.hasOwnProperty.call(x, "concept_score")
+    ));
+    if (!hasDetectionMeta) {
+      return safe.slice(0, k);
+    }
+
+    const scored = safe.map((item, idx) => {
+      const row = item && typeof item === "object" ? item : {};
+      const both = !!row.both_detected;
+      const joint = safeFloat(row.joint_score, Number.NEGATIVE_INFINITY);
+      const target = safeFloat(row.target_score, Number.NEGATIVE_INFINITY);
+      const concept = safeFloat(row.concept_score, Number.NEGATIVE_INFINITY);
+      const rank = safeInt(row.rank, idx + 1);
+      return { item, both, joint, target, concept, rank };
+    });
+
+    scored.sort((a, b) => {
+      if (a.both !== b.both) return a.both ? -1 : 1;
+      if (a.joint !== b.joint) return b.joint - a.joint;
+      if (a.target !== b.target) return b.target - a.target;
+      if (a.concept !== b.concept) return b.concept - a.concept;
+      return a.rank - b.rank;
+    });
+
+    return scored.slice(0, k).map((x) => x.item);
   }
 
   function selectGlobalTarget(payload, selectedTargetMeta) {
@@ -1085,6 +1716,11 @@
     }
     const imageStore = payload.imageStore || {};
     const imageCache = Object.create(null);
+    const coSelectionCfg = payload.metadata && typeof payload.metadata === "object"
+      ? (payload.metadata.co_activation_selection || {})
+      : {};
+    const coImageCount = 4;
+    const coGridCols = 2;
     const targetName = safeText(target.target_name, "Target");
     const targetDesc = safeText(target.target_description, "No description.");
     const targetImagesHtml = renderGlobalImageGrid(target.target_images, 4, "global-target-thumb", imageStore, imageCache);
@@ -1111,24 +1747,46 @@
       const signClass = hasEffect ? (effect >= 0 ? "effect-pos" : "effect-neg") : "";
       const effectClass = hasEffect ? (effect >= 0 ? "global-metric-pos" : "global-metric-neg") : "";
       const margClass = hasMarg ? (marginal >= 0 ? "global-metric-pos" : "global-metric-neg") : "";
+      const showMetricBox = hasEffect;
       const invertHtml = renderGlobalTerms(c && c.top_explanations_invert);
       const clipHtml = renderGlobalTerms(c && c.top_explanations_clipdissect);
       const topImagesHtml = renderGlobalImageGrid(c && c.top_activating_images, 4, "global-thumb", imageStore, imageCache);
       const coImagesSrc = (c && (
-        c.co_activated_images
+        c.detected_co_activated_images
+        || c.co_detected_images
+        || c.co_activated_images
         || c.joint_top_images
         || c.target_concept_top_images
       )) || [];
-      const coImagesHtml = renderGlobalImageGrid(coImagesSrc, 9, "global-joint-thumb", imageStore, imageCache);
+      const coImagesPicked = pickGlobalDetectedCoImages(coImagesSrc, coImageCount);
+      const coImagesHtml = renderGlobalImageGrid(coImagesPicked, coImageCount, "global-joint-thumb", imageStore, imageCache);
       const cid = safeText(c && c.concept_id, "");
-      const desc = safeText(c && (c.description || c.concept_name), "N/A");
+      const descRaw = safeText(c && (c.description || c.concept_name), "N/A");
+      const desc = escapeHtml(descRaw);
+      const descHtml = renderFadedTerm(descRaw, 52, 12);
+      const metricBoxHtml = showMetricBox
+        ? [
+          '  <aside class="global-local-box">',
+          '    <div class="global-local-effect-line">',
+          '      <span class="global-local-effect-label">Effect:</span>',
+          `      <span class="global-local-effect-value ${effectClass}">${escapeHtml(signed3(effect))}</span>`,
+          "    </div>",
+          '    <div class="global-local-meta">',
+          '      <span class="global-local-meta-label">Marginal:</span>',
+          `      <span class="global-local-meta-value ${margClass}">${escapeHtml(hasMarg ? signed3(marginal) : "N/A")}</span>`,
+          "    </div>",
+          "  </aside>",
+        ].join("")
+        : "";
+      const headClass = showMetricBox ? "global-card-head has-metrics" : "global-card-head";
       return [
         `<article class="global-concept-card ${signClass}" tabindex="0">`,
-        `  <div class="global-concept-title">Concept #${escapeHtml(cid)}</div>`,
-        `  <div class="global-concept-desc">${escapeHtml(desc)}</div>`,
-        "  <div class=\"global-metrics\">",
-        `    <span>Effect: <span class="${effectClass}">${escapeHtml(hasEffect ? signed3(effect) : "N/A")}</span></span>`,
-        `    <span>Marginal: <span class="${margClass}">${escapeHtml(hasMarg ? signed3(marginal) : "N/A")}</span></span>`,
+        `  <div class="${headClass}">`,
+        '    <div class="global-card-head-main">',
+        `      <div class="global-concept-title">Concept #${escapeHtml(cid)}</div>`,
+        `      <div class="global-concept-desc" title="${desc}">${descHtml}</div>`,
+        "    </div>",
+        metricBoxHtml,
         "  </div>",
         "  <div class=\"global-exp-grid\">",
         "    <section class=\"global-exp-block\">",
@@ -1145,8 +1803,8 @@
         `    <div class="global-top-grid">${topImagesHtml}</div>`,
         "  </section>",
         "  <aside class=\"global-joint-popover\" aria-hidden=\"true\">",
-        "    <div class=\"global-joint-label\">Target-Concept Co-Activated Images</div>",
-        `    <div class="global-joint-grid">${coImagesHtml}</div>`,
+        "    <div class=\"global-joint-label\">Target-Concept Co-Activated Images (Dataset examples)</div>",
+        `    <div class="global-joint-grid" style="grid-template-columns: repeat(${coGridCols}, minmax(0, 1fr));">${coImagesHtml}</div>`,
         "  </aside>",
         "</article>",
       ].join("");
@@ -1170,17 +1828,48 @@
     ].join("");
   }
 
+  function updateGlobalGridLayout(grid) {
+    if (!grid) return;
+    const cards = Array.from(grid.querySelectorAll(".global-concept-card"));
+    if (!cards.length) return;
+
+    const root = grid.closest(".global-viewer") || grid;
+    const cs = getComputedStyle(root);
+    const cardWidth = Number(String(cs.getPropertyValue("--global-concept-card-width") || "").replace("px", "").trim()) || 287;
+    const rowGap = Number(String(getComputedStyle(grid).rowGap || "").replace("px", "").trim()) || 12;
+    const width = Math.max(0, grid.clientWidth);
+    const maxFit = Math.max(1, Math.floor(width / Math.max(1, cardWidth)));
+    const cols = Math.max(1, Math.min(maxFit, cards.length));
+    const dynGap = cols > 1 ? Math.max(0, (width - (cols * cardWidth)) / (cols - 1)) : 0;
+    grid.style.gridTemplateColumns = `repeat(${cols}, var(--global-concept-card-width))`;
+    grid.style.columnGap = `${dynGap}px`;
+    grid.style.rowGap = `${rowGap}px`;
+  }
+
   function setupGlobalConceptHover(rootEl) {
     if (!rootEl) return;
+    if (typeof rootEl.__globalGridCleanup === "function") {
+      rootEl.__globalGridCleanup();
+      rootEl.__globalGridCleanup = null;
+    }
     const grid = rootEl.querySelector(".global-concepts-grid");
     if (!grid) return;
+    updateGlobalGridLayout(grid);
     const cards = Array.from(grid.querySelectorAll(".global-concept-card"));
     if (!cards.length) return;
 
     const chooseSide = (card) => {
       const gridRect = grid.getBoundingClientRect();
       const cardRect = card.getBoundingClientRect();
-      const minPopoverWidth = 360;
+      const pop = card.querySelector(".global-joint-popover");
+      const popWidth = pop
+        ? Math.max(
+            200,
+            Number(pop.getBoundingClientRect().width || 0),
+            Number(pop.offsetWidth || 0)
+          )
+        : 220;
+      const minPopoverWidth = popWidth + 12;
       const rightSpace = gridRect.right - cardRect.right;
       const leftSpace = cardRect.left - gridRect.left;
       const useRight = (rightSpace >= minPopoverWidth) || (rightSpace >= leftSpace);
@@ -1209,6 +1898,18 @@
         clear();
       });
     });
+
+    const onResize = () => updateGlobalGridLayout(grid);
+    window.addEventListener("resize", onResize);
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(onResize);
+      ro.observe(grid);
+    }
+    rootEl.__globalGridCleanup = () => {
+      window.removeEventListener("resize", onResize);
+      if (ro) ro.disconnect();
+    };
   }
 
   class AtlasViewer {
@@ -2391,6 +3092,75 @@
     }
   }
 
+  async function loadLocalIfNeeded() {
+    if (!dom.globalRoot) return;
+    const model = String(appState.model || "");
+    if (!model) return;
+    if (appState.localLoading) return;
+
+    const selected = currentLocalTarget();
+    if (!selected) {
+      setStep("target");
+      return;
+    }
+    if (!selected.lexpUrl) {
+      setGlobalErrorState("Selected image does not have a .lexp file.");
+      return;
+    }
+
+    const renderKey = `${model}:${selected.key}`;
+    if (renderKey === appState.localRenderKey) {
+      clearGlobalLoadingState();
+      if (dom.globalError) {
+        dom.globalError.hidden = true;
+        dom.globalError.textContent = "";
+      }
+      return;
+    }
+
+    appState.localLoading = true;
+    setGlobalLoadingStage("download", 0, 0);
+    if (dom.globalRoot) dom.globalRoot.innerHTML = "";
+
+    try {
+      const url = String(selected.lexpUrl || "");
+      let payload = appState.localPayloadByUrl[url] || null;
+      if (!payload) {
+        const payloadText = await fetchLocalPayload(url, setGlobalLoadingStage);
+        setGlobalLoadingStage("parse", 0, 0);
+        const raw = JSON.parse(payloadText);
+        payload = normalizeLocalPayload(raw);
+        appState.localPayloadByUrl[url] = payload;
+      }
+
+      setGlobalLoadingStage("render", 0, 0);
+      const rendered = renderLocalViewer(payload, selected);
+      if (!rendered || !rendered.doc) {
+        throw new Error("Could not render local explanation.");
+      }
+      dom.globalRoot.innerHTML = [
+        '<div class="local-frame-wrap">',
+        '  <iframe class="local-viewer-frame" title="Local explanation viewer" scrolling="no"></iframe>',
+        "</div>",
+      ].join("");
+      const frame = dom.globalRoot.querySelector(".local-viewer-frame");
+      if (frame) {
+        frame.srcdoc = rendered.doc;
+      }
+      appState.localRenderKey = renderKey;
+      if (dom.globalError) {
+        dom.globalError.hidden = true;
+        dom.globalError.textContent = "";
+      }
+      clearGlobalLoadingState();
+    } catch (err) {
+      console.error(err);
+      setGlobalErrorState(err instanceof Error ? err.message : String(err));
+    } finally {
+      appState.localLoading = false;
+    }
+  }
+
   function bindEvents() {
     dom.modelCards.forEach((card) => {
       card.addEventListener("click", () => {
@@ -2398,8 +3168,7 @@
         if (!nextModel) return;
         appState.model = nextModel;
         appState.method = null;
-        appState.globalTargetKey = null;
-        appState.globalRenderKey = null;
+        clearAllSelections();
         updateSelectionSummary();
         setStep("method");
       });
@@ -2408,9 +3177,10 @@
     dom.methodCards.forEach((card) => {
       card.addEventListener("click", () => {
         appState.method = normalizeMethodKey(card.getAttribute("data-method")) || "atlas";
-        appState.globalRenderKey = null;
+        clearSelectionForMethod("global");
+        clearSelectionForMethod("local");
         updateSelectionSummary();
-        if (appState.method === "global") {
+        if (appState.method === "global" || appState.method === "local") {
           setStep("target");
         } else {
           setStep("atlas");
@@ -2426,10 +3196,9 @@
         if (!btn) return;
         const key = String(btn.getAttribute("data-target-key") || "").trim();
         if (!key) return;
-        appState.globalTargetKey = key;
-        appState.globalRenderKey = null;
+        setCurrentSelectionKey(key);
         updateSelectionSummary();
-        renderGlobalTargetCards(currentGlobalTargets());
+        renderGlobalTargetCards(currentSelectionRows());
         setStep("atlas");
       });
     }
@@ -2441,14 +3210,13 @@
         if (step === "model") {
           appState.model = null;
           appState.method = null;
-          appState.globalTargetKey = null;
-          appState.globalRenderKey = null;
+          clearAllSelections();
         } else if (step === "method") {
           appState.method = null;
-          appState.globalTargetKey = null;
-          appState.globalRenderKey = null;
+          clearAllSelections();
         } else if (step === "target") {
-          appState.globalRenderKey = null;
+          if (appState.method === "local") appState.localRenderKey = null;
+          else appState.globalRenderKey = null;
         }
         updateSelectionSummary();
         setStep(step);

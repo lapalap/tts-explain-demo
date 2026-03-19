@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="assets/css/main.css" />
+  <link rel="stylesheet" href="assets/css/main.css?v=20260319-8" />
 </head>
 <body class="mode-select">
   <div class="page-bg" aria-hidden="true"></div>
@@ -19,21 +19,21 @@
       <div class="app-title-wrap">
         <p class="app-kicker">Paper Demo</p>
         <h1 class="app-title">TTS-Explain Interactive Explorer</h1>
-        <p class="app-subtitle">Select a model, choose Atlas or Global, pick a target when needed, then inspect concept behavior in wide-screen view.</p>
+        <p class="app-subtitle">Select a model, choose Atlas, Global, or Local, pick a target or image when needed, then inspect concept behavior in wide-screen view.</p>
       </div>
       <div class="header-meta-row">
         <div class="step-pill-row" id="step-pill-row" aria-label="Progress">
           <span class="step-pill" data-step="model">1. Model</span>
           <span class="step-pill" data-step="method">2. Method</span>
-          <span class="step-pill" data-step="target">3. Target</span>
+          <span class="step-pill" data-step="target">3. Target/Image</span>
           <span class="step-pill" data-step="atlas">4. View</span>
         </div>
         <div class="header-step-controls">
           <button class="ghost-btn header-control is-method-control" data-go="model" type="button">Back To Models</button>
           <button class="ghost-btn header-control is-target-control" data-go="method" type="button">Back To Methods</button>
-          <div class="selection-summary header-control is-atlas-control is-global-control is-target-control" id="selection-summary"></div>
+          <div class="selection-summary header-control is-atlas-control is-global-control is-local-control is-target-control" id="selection-summary"></div>
           <button class="ghost-btn header-control is-atlas-control" data-go="method" type="button">Back To Methods</button>
-          <button class="ghost-btn header-control is-global-control" data-go="target" type="button">Back To Targets</button>
+          <button class="ghost-btn header-control is-global-control is-local-control" data-go="target" type="button">Back To Targets</button>
           <button class="ghost-btn header-control is-atlas-control" data-action="reset-view" type="button">Reset View</button>
         </div>
       </div>
@@ -67,12 +67,15 @@
         <button class="pick-card" data-method="global" type="button" aria-label="Select Global Explanation">
           <img src="assets/cards/explanation_types/Global.svg" alt="Global" />
         </button>
+        <button class="pick-card" data-method="local" type="button" aria-label="Select Local Explanation">
+          <img src="assets/cards/explanation_types/Local.svg" alt="Local" />
+        </button>
       </div>
     </section>
 
     <section class="step-view" data-step-view="target">
       <div class="step-head">
-        <h2>Select Target</h2>
+        <h2 id="target-step-title">Select Target</h2>
       </div>
       <div class="target-note" id="global-target-note">Loading targets...</div>
       <div class="target-grid" id="global-target-grid"></div>
@@ -96,6 +99,6 @@
     </section>
   </main>
 
-  <script src="assets/js/main.js"></script>
+  <script src="assets/js/main.js?v=20260319-8"></script>
 </body>
 </html>

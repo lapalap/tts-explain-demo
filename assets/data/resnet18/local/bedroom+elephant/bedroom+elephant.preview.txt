@@ -1,0 +1,8 @@
+local_explanations: bedroom+elephant.lexp.gz
+num_items: 1
+
+[item 1]
+id: 0
+name: bedroom+elephant
+description: TTS concepts (horizontal) (target index 0)
+image: bedroom+elephant.item_0_label_0.jpg
